@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
@@ -6,8 +7,42 @@ import '../widgets/motifs.dart';
 import 'task_list_screen.dart';
 
 /// Timer / Home screen.
-class TimerScreen extends StatelessWidget {
+class TimerScreen extends StatefulWidget {
   const TimerScreen({super.key});
+
+  @override
+  State<TimerScreen> createState() => _TimerScreenState();
+}
+
+class _TimerScreenState extends State<TimerScreen> {
+  // TEMPORARY: 1Hz demo ticker so the digit-flip animation is visible.
+  // Replace with the real timer state machine when that's wired up.
+  static const _initialSec = 25 * 60;
+  int _remaining = _initialSec;
+  Timer? _demoTicker;
+
+  @override
+  void initState() {
+    super.initState();
+    _demoTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {
+        _remaining = _remaining > 0 ? _remaining - 1 : _initialSec;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _demoTicker?.cancel();
+    super.dispose();
+  }
+
+  String get _time {
+    final m = (_remaining ~/ 60).toString().padLeft(2, '0');
+    final s = (_remaining % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +69,7 @@ class TimerScreen extends StatelessWidget {
               const _ActiveModuleLabel(task: 'Grouping all notes'),
               const SizedBox(height: 8),
               const _MascotWithOrbit(),
-              const _TimerDisplay(time: '25:00'),
+              _TimerDisplay(time: _time),
               const SizedBox(height: 14),
               const _FocusCyclePills(filled: 2, total: 4),
               const SizedBox(height: 24),
@@ -302,34 +337,31 @@ class _TimerDisplay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mainStyle = TMText.display(
+      fontSize: 82,
+      letterSpacing: -2,
+      color: TM.cream,
+      height: 0.9,
+    );
+    final ghostStyle = TMText.display(
+      fontSize: 82,
+      letterSpacing: -2,
+      color: TM.tomato.withValues(alpha: 0.55),
+      height: 0.9,
+    );
     return Column(
       children: [
         SizedBox(
           height: 82,
-          child: Stack(
-            alignment: Alignment.center,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Transform.translate(
-                offset: const Offset(-3, 2),
-                child: Text(
-                  time,
-                  style: TMText.display(
-                    fontSize: 82,
-                    letterSpacing: -2,
-                    color: TM.tomato.withValues(alpha: 0.55),
-                    height: 0.9,
-                  ),
+              for (int i = 0; i < time.length; i++)
+                _FlipChar(
+                  char: time[i],
+                  mainStyle: mainStyle,
+                  ghostStyle: ghostStyle,
                 ),
-              ),
-              Text(
-                time,
-                style: TMText.display(
-                  fontSize: 82,
-                  letterSpacing: -2,
-                  color: TM.cream,
-                  height: 0.9,
-                ),
-              ),
             ],
           ),
         ),
@@ -343,6 +375,57 @@ class _TimerDisplay extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Single timer character that animates a Y-axis flip whenever [char] changes.
+/// Renders both the misregistration ghost and the main glyph together so they
+/// flip in lockstep.
+class _FlipChar extends StatelessWidget {
+  final String char;
+  final TextStyle mainStyle;
+  final TextStyle ghostStyle;
+  const _FlipChar({
+    required this.char,
+    required this.mainStyle,
+    required this.ghostStyle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 280),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, anim) => AnimatedBuilder(
+        animation: anim,
+        builder: (_, c) {
+          final angle = (1 - anim.value) * (math.pi / 2);
+          return Opacity(
+            opacity: anim.value,
+            child: Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.identity()
+                ..setEntry(3, 2, 0.001) // perspective
+                ..rotateX(angle),
+              child: c,
+            ),
+          );
+        },
+        child: child,
+      ),
+      child: Stack(
+        key: ValueKey(char),
+        alignment: Alignment.center,
+        children: [
+          Transform.translate(
+            offset: const Offset(-3, 2),
+            child: Text(char, style: ghostStyle),
+          ),
+          Text(char, style: mainStyle),
+        ],
+      ),
     );
   }
 }
