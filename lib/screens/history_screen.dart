@@ -62,6 +62,7 @@ class HistoryScreen extends StatefulWidget {
 class _HistoryScreenState extends State<HistoryScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
+  final ScrollController _scroll = ScrollController();
 
   @override
   void initState() {
@@ -85,6 +86,7 @@ class _HistoryScreenState extends State<HistoryScreen>
   @override
   void dispose() {
     _ctrl.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -113,7 +115,7 @@ class _HistoryScreenState extends State<HistoryScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
-        const DotGridBackground(),
+        ParallaxDotGrid(controller: _scroll),
         SafeArea(
           bottom: false,
           child: Column(
@@ -121,6 +123,7 @@ class _HistoryScreenState extends State<HistoryScreen>
               const _Header(),
               Expanded(
                 child: SingleChildScrollView(
+                  controller: _scroll,
                   padding: const EdgeInsets.only(bottom: 20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,

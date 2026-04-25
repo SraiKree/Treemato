@@ -4,15 +4,28 @@ import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
 
 /// Focus Stats screen.
-class StatsScreen extends StatelessWidget {
+class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
+
+  @override
+  State<StatsScreen> createState() => _StatsScreenState();
+}
+
+class _StatsScreenState extends State<StatsScreen> {
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       fit: StackFit.expand,
       children: [
-        const DotGridBackground(),
+        ParallaxDotGrid(controller: _scroll),
         SafeArea(
           bottom: false,
           child: Column(
@@ -20,6 +33,7 @@ class StatsScreen extends StatelessWidget {
               const _Header(),
               Expanded(
                 child: SingleChildScrollView(
+                  controller: _scroll,
                   padding: const EdgeInsets.only(bottom: 20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,

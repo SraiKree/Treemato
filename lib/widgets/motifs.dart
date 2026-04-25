@@ -59,6 +59,77 @@ class _DotGridPainter extends CustomPainter {
       old.spacing != spacing || old.color != color || old.radius != radius;
 }
 
+/// Same dot grid but its vertical position tracks a [ScrollController]'s
+/// offset, multiplied by [factor] (default 0.15 — subtle). The grid canvas is
+/// extended below the viewport by [bufferPx] so scrolling never reveals a
+/// gap. Painted inside its own [RepaintBoundary] and listens to the controller
+/// directly via [AnimatedBuilder] (no setState), so foreground content does
+/// not rebuild on scroll.
+class ParallaxDotGrid extends StatelessWidget {
+  final ScrollController controller;
+  final double factor;
+  final double bufferPx;
+  final double spacing;
+  final double opacity;
+  final Color color;
+  final double radius;
+
+  const ParallaxDotGrid({
+    super.key,
+    required this.controller,
+    this.factor = 0.15,
+    this.bufferPx = 200,
+    this.spacing = 16,
+    this.opacity = 0.18,
+    this.color = TM.cream,
+    this.radius = 1.0,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: ClipRect(
+          child: LayoutBuilder(
+            builder: (ctx, constraints) {
+              final dotCanvas = OverflowBox(
+                alignment: Alignment.topLeft,
+                maxWidth: double.infinity,
+                maxHeight: double.infinity,
+                child: SizedBox(
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight + bufferPx,
+                  child: CustomPaint(
+                    painter: _DotGridPainter(
+                      spacing: spacing,
+                      radius: radius,
+                      color: color.withValues(alpha: opacity),
+                    ),
+                  ),
+                ),
+              );
+              return RepaintBoundary(
+                child: AnimatedBuilder(
+                  animation: controller,
+                  builder: (_, child) {
+                    final off =
+                        controller.hasClients ? controller.offset : 0.0;
+                    return Transform.translate(
+                      offset: Offset(0, -off * factor),
+                      child: child,
+                    );
+                  },
+                  child: dotCanvas,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Subtle halftone/noise overlay — drop at the TOP of a Stack.
 class GrainOverlay extends StatelessWidget {
   final double opacity;
