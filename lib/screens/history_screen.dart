@@ -4,8 +4,16 @@ import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
 
 /// Session History screen.
-class HistoryScreen extends StatelessWidget {
-  const HistoryScreen({super.key});
+///
+/// `visible` is plumbed in from `MainShell` so the staggered slide-in plays
+/// every time the user navigates to this tab — not just once on app launch,
+/// which is when initState fires inside the persistent IndexedStack.
+class HistoryScreen extends StatefulWidget {
+  final bool visible;
+  const HistoryScreen({super.key, this.visible = false});
+
+  @override
+  State<HistoryScreen> createState() => _HistoryScreenState();
 
   static const _today = <_HistoryEntry>[
     _HistoryEntry(
@@ -49,8 +57,59 @@ class HistoryScreen extends StatelessWidget {
     ),
   ];
 
+}
+
+class _HistoryScreenState extends State<HistoryScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 750),
+    );
+    if (widget.visible) _ctrl.forward();
+  }
+
+  @override
+  void didUpdateWidget(covariant HistoryScreen old) {
+    super.didUpdateWidget(old);
+    // Replay each time the tab becomes visible.
+    if (!old.visible && widget.visible) {
+      _ctrl.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final today = HistoryScreen._today;
+    final yesterday = HistoryScreen._yesterday;
+    final items = <Widget>[
+      _DayDivider(label: 'today', count: today.length),
+      ...today.map(
+        (e) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+          child: _HistoryRow(entry: e),
+        ),
+      ),
+      const SizedBox(height: 10),
+      _DayDivider(label: 'yesterday', count: yesterday.length),
+      ...yesterday.map(
+        (e) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+          child: _HistoryRow(entry: e),
+        ),
+      ),
+    ];
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -66,24 +125,13 @@ class HistoryScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _DayDivider(label: 'today', count: _today.length),
-                      ..._today.map(
-                        (e) => Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 20, vertical: 5),
-                          child: _HistoryRow(entry: e),
+                      for (int i = 0; i < items.length; i++)
+                        _StaggeredEntry(
+                          controller: _ctrl,
+                          index: i,
+                          total: items.length,
+                          child: items[i],
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      _DayDivider(
-                          label: 'yesterday', count: _yesterday.length),
-                      ..._yesterday.map(
-                        (e) => Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 20, vertical: 5),
-                          child: _HistoryRow(entry: e),
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -92,6 +140,46 @@ class HistoryScreen extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Wraps a child in a fade + slide-up driven by a slice of [controller]'s
+/// progress. Slice = `[index/total .. index/total + window]`, clamped to 1.
+class _StaggeredEntry extends StatelessWidget {
+  final AnimationController controller;
+  final int index;
+  final int total;
+  final Widget child;
+  const _StaggeredEntry({
+    required this.controller,
+    required this.index,
+    required this.total,
+    required this.child,
+  });
+
+  static const _window = 0.4; // each item takes 40% of total to play
+  static const _slidePx = 16.0;
+
+  @override
+  Widget build(BuildContext context) {
+    // Last item starts at (1 - window) so everything finishes by 1.0.
+    final start = (index / total) * (1 - _window);
+    final end = start + _window;
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (_, child) {
+        final raw = ((controller.value - start) / (end - start)).clamp(0.0, 1.0);
+        final t = Curves.easeOutCubic.transform(raw);
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, (1 - t) * _slidePx),
+            child: child,
+          ),
+        );
+      },
+      child: child,
     );
   }
 }

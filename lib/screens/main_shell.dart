@@ -34,10 +34,10 @@ class _MainShellState extends State<MainShell> {
           Expanded(
             child: IndexedStack(
               index: _index,
-              children: const [
-                HistoryScreen(),
-                TimerScreen(),
-                StatsScreen(),
+              children: [
+                HistoryScreen(visible: _index == 0),
+                const TimerScreen(),
+                const StatsScreen(),
               ],
             ),
           ),
