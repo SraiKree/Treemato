@@ -1,5 +1,7 @@
 import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
 import 'history_screen.dart';
@@ -54,13 +56,74 @@ class _MainShellState extends State<MainShell> {
 
 // Bottom navigation bar
 
-class _PersistentBottomBar extends StatelessWidget {
+class _PersistentBottomBar extends StatefulWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
   const _PersistentBottomBar({
     required this.currentIndex,
     required this.onTap,
   });
+
+  @override
+  State<_PersistentBottomBar> createState() => _PersistentBottomBarState();
+}
+
+class _PersistentBottomBarState extends State<_PersistentBottomBar>
+    with SingleTickerProviderStateMixin {
+  static const _spring = SpringDescription(
+    mass: 1,
+    stiffness: 200,
+    damping: 18,
+  );
+
+  late final AnimationController _ctrl;
+  double _startX = 0;
+  double _endX = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController.unbounded(vsync: this);
+    final initial = _alignXFor(widget.currentIndex);
+    _startX = initial;
+    _endX = initial;
+    _ctrl.value = 1.0;
+  }
+
+  @override
+  void didUpdateWidget(covariant _PersistentBottomBar old) {
+    super.didUpdateWidget(old);
+    if (old.currentIndex != widget.currentIndex) {
+      // Capture current visual position so re-tapping mid-flight stays smooth.
+      final current = lerpDouble(_startX, _endX, _ctrl.value) ?? _endX;
+      _startX = current;
+      _endX = _alignXFor(widget.currentIndex);
+      _ctrl.stop();
+      _ctrl.value = 0.0;
+      _ctrl.animateWith(SpringSimulation(_spring, 0, 1, 0));
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  /// Alignment corresponding to the center of each third of the row.
+  /// Alignment x = -1 → parent left edge, 0 → center, 1 → right edge;
+  /// so ±2.23/3 land the child center on the left/right slot centers.
+  static double _alignXFor(int i) {
+    switch (i) {
+      case 0:
+        return -2.23 / 3;
+      case 2:
+        return 2.23 / 3;
+      case 1:
+      default:
+        return 0;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -76,12 +139,17 @@ class _PersistentBottomBar extends StatelessWidget {
           clipBehavior: Clip.none,
           alignment: Alignment.center,
           children: [
-            // Tomato highlight behind the active icon.
-            AnimatedAlign(
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOutCubic,
-              alignment: _alignFor(currentIndex),
-              child: _Highlight(big: currentIndex == 1),
+            // Tomato highlight — spring-driven slide between slot centers.
+            AnimatedBuilder(
+              animation: _ctrl,
+              builder: (_, child) {
+                final x = lerpDouble(_startX, _endX, _ctrl.value) ?? _endX;
+                return Align(
+                  alignment: Alignment(x, 0),
+                  child: child,
+                );
+              },
+              child: _Highlight(big: widget.currentIndex == 1),
             ),
             // Lemon checker strip anchored above the center slot (static).
             Positioned(
@@ -94,27 +162,18 @@ class _PersistentBottomBar extends StatelessWidget {
             // Icon slots — equal width, each centered in its cell.
             Row(
               children: [
-                _Slot(onTap: () => onTap(0), child: const _ClockIcon()),
-                _Slot(onTap: () => onTap(1), child: const _PlayIcon()),
-                _Slot(onTap: () => onTap(2), child: const _BarChartIcon()),
+                _Slot(onTap: () => widget.onTap(0), child: const _ClockIcon()),
+                _Slot(onTap: () => widget.onTap(1), child: const _TreeIcon()),
+                _Slot(
+                  onTap: () => widget.onTap(2),
+                  child: const _BarChartIcon(),
+                ),
               ],
             ),
           ],
         ),
       ),
     );
-  }
-
-  Alignment _alignFor(int i) {
-    switch (i) {
-      case 0:
-        return const Alignment(-2.23 / 3, 0);
-      case 2:
-        return const Alignment(2.23 / 3, 0);
-      case 1:
-      default:
-        return Alignment.center;
-    }
   }
 }
 
@@ -142,18 +201,60 @@ class _Highlight extends StatelessWidget {
   }
 }
 
-class _Slot extends StatelessWidget {
+class _Slot extends StatefulWidget {
   final VoidCallback onTap;
   final Widget child;
   const _Slot({required this.onTap, required this.child});
+
+  @override
+  State<_Slot> createState() => _SlotState();
+}
+
+class _SlotState extends State<_Slot> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
+    _scale = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween(begin: 1.0, end: 1.22)
+            .chain(CurveTween(curve: Curves.easeOut)),
+        weight: 35,
+      ),
+      TweenSequenceItem(
+        tween: Tween(begin: 1.22, end: 1.0)
+            .chain(CurveTween(curve: Curves.easeOutBack)),
+        weight: 65,
+      ),
+    ]).animate(_ctrl);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    _ctrl.forward(from: 0);
+    widget.onTap();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Center(child: child),
+        onTap: _handleTap,
+        child: Center(
+          child: ScaleTransition(scale: _scale, child: widget.child),
+        ),
       ),
     );
   }
@@ -196,31 +297,53 @@ class _ClockPainter extends CustomPainter {
   bool shouldRepaint(covariant _ClockPainter old) => false;
 }
 
-class _PlayIcon extends StatelessWidget {
-  const _PlayIcon();
+class _TreeIcon extends StatelessWidget {
+  const _TreeIcon();
   @override
   Widget build(BuildContext context) => const SizedBox(
         width: 22,
         height: 22,
-        child: CustomPaint(painter: _PlayPainter()),
+        child: CustomPaint(painter: _TreePainter()),
       );
 }
 
-class _PlayPainter extends CustomPainter {
-  const _PlayPainter();
+class _TreePainter extends CustomPainter {
+  const _TreePainter();
 
   @override
   void paint(Canvas c, Size s) {
-    final path = Path()
-      ..moveTo(s.width * 5 / 22, s.height * 3 / 22)
-      ..lineTo(s.width * 19 / 22, s.height * 11 / 22)
-      ..lineTo(s.width * 5 / 22, s.height * 19 / 22)
+    final fill = Paint()..color = TM.cream;
+    final k = s.width / 22.0;
+
+    // Three stacked foliage triangles (chunky pine silhouette).
+    final top = Path()
+      ..moveTo(11 * k, 2 * k)
+      ..lineTo(6 * k, 8.5 * k)
+      ..lineTo(16 * k, 8.5 * k)
       ..close();
-    c.drawPath(path, Paint()..color = TM.cream);
+    final mid = Path()
+      ..moveTo(11 * k, 6 * k)
+      ..lineTo(4.5 * k, 13.5 * k)
+      ..lineTo(17.5 * k, 13.5 * k)
+      ..close();
+    final bot = Path()
+      ..moveTo(11 * k, 10 * k)
+      ..lineTo(3 * k, 18 * k)
+      ..lineTo(19 * k, 18 * k)
+      ..close();
+    c.drawPath(top, fill);
+    c.drawPath(mid, fill);
+    c.drawPath(bot, fill);
+
+    // Trunk.
+    c.drawRect(
+      Rect.fromLTWH(9.5 * k, 18 * k, 3 * k, 3 * k),
+      fill,
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _PlayPainter old) => false;
+  bool shouldRepaint(covariant _TreePainter old) => false;
 }
 
 class _BarChartIcon extends StatelessWidget {
