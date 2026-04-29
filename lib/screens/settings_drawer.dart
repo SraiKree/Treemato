@@ -39,7 +39,7 @@ class SettingsDrawer extends StatelessWidget {
                   _DurationRow(
                     kind: _DurIcon.tomato,
                     color: TM.tomato,
-                    title: 'Pomodoro Focus',
+                    title: 'Pomodoro Slot',
                     subtitle: 'default focus duration',
                     value: '25',
                     unit: 'm',
@@ -58,7 +58,7 @@ class SettingsDrawer extends StatelessWidget {
                     kind: _DurIcon.couch,
                     color: TM.cobalt,
                     title: 'Long Break',
-                    subtitle: 'proper nap (every 3 pomos)',
+                    subtitle: 'do not doomscroll (every 3 pomos)',
                     value: '15',
                     unit: 'm',
                   ),
@@ -410,7 +410,7 @@ class _CycleMap extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'CURRENT_CYCLE_MAP',
+          'CYCLE MAP',
           style: TMText.display(
             fontSize: 10,
             letterSpacing: 2,
@@ -558,7 +558,7 @@ class _WorkflowMode extends StatelessWidget {
         const SizedBox(height: 10),
         const _ToggleCard(
           title: 'Strict Mode',
-          subtitle: 'disable pausing · pure pomodoro rules',
+          subtitle: 'disable pausing',
           on: true,
           shadowColor: TM.lemon,
         ),
@@ -682,15 +682,14 @@ class _Footer extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'TREEMATO',
-          style: TMText.display(
-            fontSize: 12,
-            letterSpacing: 2,
+          'Treemato',
+          style: TMText.brand(
+            fontSize: 18,
             color: TM.tomato,
           ),
         ),
         Text(
-          'v0.4.0 · made with ♥ and caffeine',
+          'v0.4.0 · made with ♥ by TreeGPT',
           style: TextStyle(
             fontFamily: 'monospace',
             fontSize: 9,

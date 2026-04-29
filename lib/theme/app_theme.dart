@@ -64,6 +64,22 @@ class TMText {
       height: height,
     );
   }
+
+  /// Decorative brand face — used only for the "Treemato" wordmark.
+  static TextStyle brand({
+    double fontSize = 22,
+    Color color = TM.cream,
+    double letterSpacing = 0,
+    double? height,
+  }) {
+    return TextStyle(
+      fontFamily: 'VeniteAdoremus',
+      fontSize: fontSize,
+      color: color,
+      letterSpacing: letterSpacing,
+      height: height,
+    );
+  }
 }
 
 ThemeData buildTreematoTheme() {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bip_mascot.dart';
@@ -102,11 +103,10 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           Text(
-            'TREEMATO',
-            style: TMText.display(
-              fontSize: 13,
-              letterSpacing: 2,
-              color: TM.cream.withValues(alpha: 0.55),
+            'Treemato',
+            style: TMText.brand(
+              fontSize: 20,
+              color: TM.cream.withValues(alpha: 0.7),
             ),
           ),
           GestureDetector(
@@ -366,15 +366,86 @@ class _TimerDisplay extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Text(
-          'one tomato, no worries',
-          style: TMText.ui(
-            fontSize: 11,
-            letterSpacing: 2,
-            color: TM.cream.withValues(alpha: 0.6),
-          ),
-        ),
+        const _RotatingSubtitle(),
       ],
+    );
+  }
+}
+
+/// Rotates a set of marker-voice motivational lines under the timer.
+/// Swaps every 13 seconds with a soft cross-fade. Respects reduced-motion.
+class _RotatingSubtitle extends StatefulWidget {
+  const _RotatingSubtitle();
+
+  @override
+  State<_RotatingSubtitle> createState() => _RotatingSubtitleState();
+}
+
+class _RotatingSubtitleState extends State<_RotatingSubtitle> {
+  static const _lines = <String>[
+    'it gets easier, trust me bro',
+    'breathe in. breathe out. type.',
+    "you've survived worse. like monday.",
+    'tabs can wait. they always do.',
+    'one tomato at a time, hero.',
+  ];
+
+  int _index = 0;
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 13), (_) {
+      if (!mounted) return;
+      setState(() => _index = (_index + 1) % _lines.length);
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    return AnimatedSwitcher(
+      duration: reduceMotion
+          ? Duration.zero
+          : const Duration(milliseconds: 500),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, anim) {
+        if (reduceMotion) return child;
+        return AnimatedBuilder(
+          animation: anim,
+          builder: (_, c) {
+            final sigma = (1 - anim.value) * 6.0;
+            final filtered = sigma > 0.05
+                ? ImageFiltered(
+                    imageFilter: ui.ImageFilter.blur(
+                      sigmaX: sigma,
+                      sigmaY: sigma,
+                    ),
+                    child: c,
+                  )
+                : c;
+            return Opacity(opacity: anim.value, child: filtered);
+          },
+          child: child,
+        );
+      },
+      child: Text(
+        _lines[_index],
+        key: ValueKey(_index),
+        style: TMText.ui(
+          fontSize: 11,
+          letterSpacing: 2,
+          color: TM.cream.withValues(alpha: 0.6),
+        ),
+      ),
     );
   }
 }

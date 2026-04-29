@@ -428,6 +428,25 @@ class _MonthlyHarvest extends StatelessWidget {
 class _QuoteCard extends StatelessWidget {
   const _QuoteCard();
 
+  static const _quotes = <String>[
+    '"discipline is just self-respect with a stopwatch."',
+    '"the work was never the hard part. sitting still was."',
+    '"you don\'t find time. you corner it."',
+    '"a finished bad draft outranks a perfect imaginary one."',
+    '"boredom is the doorway. most people leave before knocking."',
+    '"small repeated acts are how mountains get tired of standing."',
+    '"focus is a muscle. yours has been on vacation."',
+    '"the cure for overthinking is undertaking."',
+    '"you can do anything for 25 minutes. probably."',
+    '"starting is the tax. paying it gets cheaper."',
+  ];
+
+  String get _quoteOfTheDay {
+    final now = DateTime.now();
+    final dayOfYear = now.difference(DateTime(now.year)).inDays;
+    return _quotes[dayOfYear % _quotes.length];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Transform.rotate(
@@ -445,16 +464,28 @@ class _QuoteCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '"a tomato a day keeps the chaos at bay."',
+              _quoteOfTheDay,
               style: TMText.marker(fontSize: 20, color: TM.ink, height: 1.1),
             ),
             const SizedBox(height: 6),
-            Text(
-              '— Treemato, probably',
-              style: TMText.ui(
-                fontSize: 10,
-                letterSpacing: 2,
-                color: TM.ink.withValues(alpha: 0.6),
+            Text.rich(
+              TextSpan(
+                style: TMText.ui(
+                  fontSize: 10,
+                  letterSpacing: 2,
+                  color: TM.ink.withValues(alpha: 0.6),
+                ),
+                children: [
+                  const TextSpan(text: '— '),
+                  TextSpan(
+                    text: 'Treemato',
+                    style: TMText.brand(
+                      fontSize: 14,
+                      color: TM.ink.withValues(alpha: 0.75),
+                    ),
+                  ),
+                  const TextSpan(text: ', probably'),
+                ],
               ),
             ),
           ],
