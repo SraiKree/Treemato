@@ -40,16 +40,24 @@ class TimerScreen extends StatelessWidget {
               const _TopBar(),
               const SizedBox(height: 12),
               _ActiveModuleLabel(task: timer.phaseLabel),
-              const SizedBox(height: 8),
-              _MascotWithOrbit(isFocus: timer.isFocusPhase),
+              const Spacer(),
+              _MascotWithOrbit(
+                bipState: timer.isCelebrating
+                    ? BipState.done
+                    : (timer.isFocusPhase && timer.isRunning)
+                        ? BipState.focus
+                        : BipState.idle,
+              ),
+              const Spacer(),
               _TimerDisplay(time: timer.formattedTime),
-              const SizedBox(height: 14),
+              const SizedBox(height: 20),
               _FocusCyclePills(
                 filled: timer.completedPomodoros,
                 total: 3,
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 32),
               const _ControlButton(),
+              const SizedBox(height: 16),
             ],
           ),
         ),
@@ -218,15 +226,15 @@ class _ActiveModuleLabel extends StatelessWidget {
 // Mascot and orbit
 
 class _MascotWithOrbit extends StatelessWidget {
-  final bool isFocus;
-  const _MascotWithOrbit({this.isFocus = true});
+  final BipState bipState;
+  const _MascotWithOrbit({this.bipState = BipState.idle});
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: SizedBox(
-        width: 260,
-        height: 220,
+        width: 320,
+        height: 280,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -234,25 +242,25 @@ class _MascotWithOrbit extends StatelessWidget {
               child: CustomPaint(
                 painter: _DashedEllipsePainter(
                   insetX: 20,
-                  insetY: 25,
+                  insetY: 30,
                 ),
               ),
             ),
             Center(
               child: BipMascot(
-                state: isFocus ? BipState.focus : BipState.idle,
-                size: 180,
+                state: bipState,
+                size: 240,
               ),
             ),
             const Positioned(
-              top: 18,
-              left: 48,
-              child: _OrbitDot(size: 8, color: TM.cobalt),
+              top: 24,
+              left: 54,
+              child: _OrbitDot(size: 10, color: TM.cobalt),
             ),
             const Positioned(
-              top: 150,
-              right: 40,
-              child: _OrbitDot(size: 6, color: TM.lemon),
+              top: 190,
+              right: 48,
+              child: _OrbitDot(size: 8, color: TM.lemon),
             ),
           ],
         ),

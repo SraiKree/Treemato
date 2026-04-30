@@ -43,6 +43,7 @@ class TimerProvider extends ChangeNotifier {
   late int _secondsRemaining = _durationForPhase(_phase);
 
   Timer? _ticker;
+  bool _celebrating = false;
 
   // ── Getters ──────────────────────────────────────────────────────────
   TimerPhase get phase => _phase;
@@ -51,6 +52,7 @@ class TimerProvider extends ChangeNotifier {
   bool get isRunning => _status == TimerStatus.running;
   bool get isPaused => _status == TimerStatus.paused;
   bool get isIdle => _status == TimerStatus.idle;
+  bool get isCelebrating => _celebrating;
 
   /// How far through the current phase we are, 0.0 → 1.0.
   double get progress {
@@ -127,6 +129,7 @@ class TimerProvider extends ChangeNotifier {
   /// Start or resume the countdown.
   void startTimer() {
     if (_status == TimerStatus.running) return;
+    _celebrating = false;
     _status = TimerStatus.running;
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
@@ -145,6 +148,7 @@ class TimerProvider extends ChangeNotifier {
   /// Does NOT change the phase — stays in the current one.
   void resetTimer() {
     _ticker?.cancel();
+    _celebrating = false;
     _status = TimerStatus.idle;
     _secondsRemaining = _durationForPhase(_phase);
     notifyListeners();
@@ -153,6 +157,7 @@ class TimerProvider extends ChangeNotifier {
   /// Reset the entire cycle back to Pomodoro 1, idle.
   void resetCycle() {
     _ticker?.cancel();
+    _celebrating = false;
     _phase = TimerPhase.pomodoro1;
     _status = TimerStatus.idle;
     _secondsRemaining = _durationForPhase(_phase);
@@ -161,6 +166,7 @@ class TimerProvider extends ChangeNotifier {
 
   /// Manually skip to the next phase (useful for testing / skipping breaks).
   void skipPhase() {
+    _celebrating = false;
     _advancePhase();
   }
 
@@ -178,12 +184,22 @@ class TimerProvider extends ChangeNotifier {
 
   void _advancePhase() {
     _ticker?.cancel();
+    final completedPhase = _phase;
     final phases = TimerPhase.values;
     final nextIndex = (_phase.index + 1) % phases.length;
     _phase = phases[nextIndex];
     _secondsRemaining = _durationForPhase(_phase);
     // Pause between phases so the user explicitly starts the next one.
     _status = TimerStatus.idle;
+
+    // Celebrate for 3 seconds after completing a focus phase.
+    final wasFocus = completedPhase == TimerPhase.pomodoro1 ||
+        completedPhase == TimerPhase.pomodoro2 ||
+        completedPhase == TimerPhase.pomodoro3;
+    if (wasFocus) {
+      _celebrating = true;
+    }
+
     notifyListeners();
   }
 
