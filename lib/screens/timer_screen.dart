@@ -2,51 +2,23 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bip_mascot.dart';
 import '../widgets/motifs.dart';
 import 'task_list_screen.dart';
 
 /// Timer / Home screen.
-class TimerScreen extends StatefulWidget {
+///
+/// Reads all state from [TimerProvider] — no local timer or demo ticker.
+class TimerScreen extends StatelessWidget {
   const TimerScreen({super.key});
 
   @override
-  State<TimerScreen> createState() => _TimerScreenState();
-}
-
-class _TimerScreenState extends State<TimerScreen> {
-  // TEMPORARY: 1Hz demo ticker so the digit-flip animation is visible.
-  // Replace with the real timer state machine when that's wired up.
-  static const _initialSec = 25 * 60;
-  int _remaining = _initialSec;
-  Timer? _demoTicker;
-
-  @override
-  void initState() {
-    super.initState();
-    _demoTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
-      setState(() {
-        _remaining = _remaining > 0 ? _remaining - 1 : _initialSec;
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _demoTicker?.cancel();
-    super.dispose();
-  }
-
-  String get _time {
-    final m = (_remaining ~/ 60).toString().padLeft(2, '0');
-    final s = (_remaining % 60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final timer = context.watch<TimerProvider>();
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -67,14 +39,17 @@ class _TimerScreenState extends State<TimerScreen> {
             children: [
               const _TopBar(),
               const SizedBox(height: 12),
-              const _ActiveModuleLabel(task: 'Grouping all notes'),
+              _ActiveModuleLabel(task: timer.phaseLabel),
               const SizedBox(height: 8),
-              const _MascotWithOrbit(),
-              _TimerDisplay(time: _time),
+              _MascotWithOrbit(isFocus: timer.isFocusPhase),
+              _TimerDisplay(time: timer.formattedTime),
               const SizedBox(height: 14),
-              const _FocusCyclePills(filled: 2, total: 4),
+              _FocusCyclePills(
+                filled: timer.completedPomodoros,
+                total: 3,
+              ),
               const SizedBox(height: 24),
-              const _PauseButton(),
+              const _ControlButton(),
             ],
           ),
         ),
@@ -243,7 +218,8 @@ class _ActiveModuleLabel extends StatelessWidget {
 // Mascot and orbit
 
 class _MascotWithOrbit extends StatelessWidget {
-  const _MascotWithOrbit();
+  final bool isFocus;
+  const _MascotWithOrbit({this.isFocus = true});
 
   @override
   Widget build(BuildContext context) {
@@ -262,7 +238,12 @@ class _MascotWithOrbit extends StatelessWidget {
                 ),
               ),
             ),
-            const Center(child: BipMascot(state: BipState.focus, size: 180)),
+            Center(
+              child: BipMascot(
+                state: isFocus ? BipState.focus : BipState.idle,
+                size: 180,
+              ),
+            ),
             const Positioned(
               top: 18,
               left: 48,
@@ -563,48 +544,81 @@ class _PillStripePainter extends CustomPainter {
   bool shouldRepaint(covariant _PillStripePainter old) => false;
 }
 
-// Pause button
+// Control button — toggles between START / PAUSE / RESUME.
+// Long-press resets the current phase.
 
-class _PauseButton extends StatelessWidget {
-  const _PauseButton();
+class _ControlButton extends StatelessWidget {
+  const _ControlButton();
 
   @override
   Widget build(BuildContext context) {
+    final timer = context.watch<TimerProvider>();
+
+    // Button label depends on state.
+    final String label;
+    switch (timer.status) {
+      case TimerStatus.idle:
+        label = 'START';
+      case TimerStatus.running:
+        label = 'PAUSE';
+      case TimerStatus.paused:
+        label = 'RESUME';
+    }
+
+    // Color shifts for break phases.
+    final bgColor = timer.isFocusPhase ? TM.tomato : TM.cobalt;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 40),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: BoxDecoration(
-              color: TM.tomato,
-              border: Border.all(color: TM.ink, width: 3),
-              borderRadius: BorderRadius.circular(999),
-              boxShadow: const [
-                BoxShadow(color: TM.lemon, offset: Offset(4, 4)),
-              ],
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              'PAUSE',
-              style: TMText.display(
-                fontSize: 20,
-                letterSpacing: 3,
-                color: TM.cream,
+      child: GestureDetector(
+        onTap: () {
+          if (timer.isRunning) {
+            timer.pauseTimer();
+          } else {
+            timer.startTimer();
+          }
+        },
+        onLongPress: () => timer.resetTimer(),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: bgColor,
+                border: Border.all(color: TM.ink, width: 3),
+                borderRadius: BorderRadius.circular(999),
+                boxShadow: const [
+                  BoxShadow(color: TM.lemon, offset: Offset(4, 4)),
+                ],
+              ),
+              alignment: Alignment.center,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: Text(
+                  label,
+                  key: ValueKey(label),
+                  style: TMText.display(
+                    fontSize: 20,
+                    letterSpacing: 3,
+                    color: TM.cream,
+                  ),
+                ),
               ),
             ),
-          ),
-          Positioned(
-            top: -8,
-            right: 16,
-            child: Transform.rotate(
-              angle: 12 * math.pi / 180,
-              child: const Bolt(size: 20, color: TM.lemon),
+            Positioned(
+              top: -8,
+              right: 16,
+              child: Transform.rotate(
+                angle: 12 * math.pi / 180,
+                child: const Bolt(size: 20, color: TM.lemon),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
