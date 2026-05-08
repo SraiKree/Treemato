@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bip_mascot.dart';
+import '../widgets/freeze_options_modal.dart';
+import '../widgets/freeze_overlay.dart';
 import '../widgets/motifs.dart';
 import 'task_list_screen.dart';
 
@@ -49,7 +51,10 @@ class TimerScreen extends StatelessWidget {
                         : BipState.idle,
               ),
               const Spacer(),
-              _TimerDisplay(time: timer.formattedTime),
+              _TimerDisplay(
+                time: timer.formattedTime,
+                isRunning: timer.isRunning,
+              ),
               const SizedBox(height: 20),
               _FocusCyclePills(
                 filled: timer.completedPomodoros,
@@ -319,10 +324,114 @@ class _DashedEllipsePainter extends CustomPainter {
 }
 
 // Timer display
+//
+// Long-pressing the digits triggers a 2-second cobalt-frost freeze build-up.
+// On completion, the SKIP / RESET options modal pops; releasing early
+// reverses the animation and the timer carries on. The underlying countdown
+// keeps ticking throughout — the freeze visuals are layered on top only.
 
-class _TimerDisplay extends StatelessWidget {
+class _TimerDisplay extends StatefulWidget {
   final String time;
-  const _TimerDisplay({required this.time});
+  final bool isRunning;
+  const _TimerDisplay({required this.time, required this.isRunning});
+
+  @override
+  State<_TimerDisplay> createState() => _TimerDisplayState();
+}
+
+class _TimerDisplayState extends State<_TimerDisplay>
+    with TickerProviderStateMixin {
+  late final AnimationController _freezeCtrl;
+
+  // Independent looping ticker that drives the sweep-gradient highlight
+  // around the frost border. Runs only while the freeze is engaged.
+  late final AnimationController _shimmerCtrl;
+  bool _modalOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _freezeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+      reverseDuration: const Duration(milliseconds: 400),
+    )..addStatusListener(_onFreezeStatus);
+    _shimmerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    );
+  }
+
+  @override
+  void dispose() {
+    _freezeCtrl
+      ..removeStatusListener(_onFreezeStatus)
+      ..dispose();
+    _shimmerCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onFreezeStatus(AnimationStatus s) {
+    if (s == AnimationStatus.dismissed) {
+      _shimmerCtrl.stop();
+      return;
+    }
+    if (s != AnimationStatus.completed || _modalOpen || !mounted) return;
+    _handleFreezeComplete();
+  }
+
+  /// Pauses the timer, awaits the user's choice, then either advances /
+  /// restarts / resumes depending on the outcome, and reverses the freeze
+  /// animation.
+  Future<void> _handleFreezeComplete() async {
+    _modalOpen = true;
+    final timer = context.read<TimerProvider>();
+    final wasRunning = timer.isRunning;
+    if (wasRunning) timer.pauseTimer();
+
+    final choice = await showFreezeOptions(context);
+
+    if (!mounted) return;
+    _modalOpen = false;
+
+    final t = context.read<TimerProvider>();
+    switch (choice) {
+      case FreezeChoice.skip:
+        t.skipPhase();
+        break;
+      case FreezeChoice.reset:
+        t.resetTimer();
+        break;
+      case null:
+        // Dismissed without choosing — restore the prior run state so the
+        // session continues as if nothing happened.
+        if (wasRunning) t.startTimer();
+        break;
+    }
+
+    _freezeCtrl.reverse();
+  }
+
+  void _engageFreeze() {
+    // Only available while the timer is actually counting down. Idle and
+    // paused states have their own affordances (the START / RESUME button)
+    // and the freeze gesture would be confusing without an active session
+    // to skip or restart.
+    if (!widget.isRunning) return;
+    final reduceMotion = MediaQuery.of(context).disableAnimations;
+    _freezeCtrl.duration = reduceMotion
+        ? Duration.zero
+        : const Duration(milliseconds: 2000);
+    _freezeCtrl.forward();
+    if (!reduceMotion && !_shimmerCtrl.isAnimating) {
+      _shimmerCtrl.repeat();
+    }
+  }
+
+  void _releaseFreeze() {
+    if (_modalOpen) return;
+    _freezeCtrl.reverse();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -338,20 +447,59 @@ class _TimerDisplay extends StatelessWidget {
       color: TM.tomato.withValues(alpha: 0.55),
       height: 0.9,
     );
+
+    final digitsRow = SizedBox(
+      height: 82,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (int i = 0; i < widget.time.length; i++)
+            _FlipChar(
+              char: widget.time[i],
+              mainStyle: mainStyle,
+              ghostStyle: ghostStyle,
+            ),
+        ],
+      ),
+    );
+
     return Column(
       children: [
-        SizedBox(
-          height: 82,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (int i = 0; i < time.length; i++)
-                _FlipChar(
-                  char: time[i],
-                  mainStyle: mainStyle,
-                  ghostStyle: ghostStyle,
+        // Caption rebuilds only when freeze progress changes — not every
+        // shimmer frame. Hidden entirely when the timer isn't running, since
+        // the gesture is gated on isRunning.
+        AnimatedBuilder(
+          animation: _freezeCtrl,
+          builder: (_, __) => Opacity(
+            opacity: widget.isRunning
+                ? (1.0 - _freezeCtrl.value).clamp(0.0, 1.0)
+                : 0.0,
+            child: Transform.rotate(
+              angle: -2.3 * math.pi / 180,
+              child: Text(
+                'hold timer for more options',
+                style: TMText.marker(
+                  fontSize: 14,
+                  color: TM.cream.withValues(alpha: 0.55),
                 ),
-            ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onLongPressDown: (_) => _engageFreeze(),
+          onLongPressCancel: _releaseFreeze,
+          onLongPressEnd: (_) => _releaseFreeze(),
+          child: AnimatedBuilder(
+            animation: Listenable.merge([_freezeCtrl, _shimmerCtrl]),
+            builder: (_, child) => FreezeOverlay(
+              progress: _freezeCtrl.value,
+              shimmerPhase: _shimmerCtrl.value,
+              child: child!,
+            ),
+            child: digitsRow,
           ),
         ),
         const SizedBox(height: 8),
@@ -553,7 +701,7 @@ class _PillStripePainter extends CustomPainter {
 }
 
 // Control button — toggles between START / PAUSE / RESUME.
-// Long-press resets the current phase.
+// Skip / reset now live behind the freeze gesture on the timer digits.
 
 class _ControlButton extends StatelessWidget {
   const _ControlButton();
@@ -586,7 +734,6 @@ class _ControlButton extends StatelessWidget {
             timer.startTimer();
           }
         },
-        onLongPress: () => timer.resetTimer(),
         child: Stack(
           clipBehavior: Clip.none,
           children: [
