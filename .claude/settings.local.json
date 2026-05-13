@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(flutter --version)",
-      "Bash(flutter doctor *)"
+      "Bash(flutter doctor *)",
+      "Bash(node *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\saisr\\\\OneDrive\\\\Documents\\\\pomo_app\\\\lib\\\\providers\" -Filter \"*.dart\")",
+      "Bash(Select-Object Name)"
     ]
   }
 }

@@ -1,5 +1,9 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
 
@@ -41,8 +45,6 @@ class SettingsDrawer extends StatelessWidget {
                     color: TM.tomato,
                     title: 'Pomodoro Slot',
                     subtitle: 'default focus duration',
-                    value: '25',
-                    unit: 'm',
                   ),
                   SizedBox(height: 14),
                   _DurationRow(
@@ -50,8 +52,6 @@ class SettingsDrawer extends StatelessWidget {
                     color: TM.mint,
                     title: 'Short Break',
                     subtitle: 'tiny breather',
-                    value: '5',
-                    unit: 'm',
                   ),
                   SizedBox(height: 14),
                   _DurationRow(
@@ -59,8 +59,6 @@ class SettingsDrawer extends StatelessWidget {
                     color: TM.cobalt,
                     title: 'Long Break',
                     subtitle: 'do not doomscroll (every 3 pomos)',
-                    value: '15',
-                    unit: 'm',
                   ),
                   SizedBox(height: 14),
                   _CycleMap(),
@@ -164,19 +162,42 @@ class _DurationRow extends StatelessWidget {
   final Color color;
   final String title;
   final String subtitle;
-  final String value;
-  final String unit;
   const _DurationRow({
     required this.kind,
     required this.color,
     required this.title,
     required this.subtitle,
-    required this.value,
-    required this.unit,
   });
+
+  /// Read the current value for this row from the provider.
+  int _read(TimerProvider t) {
+    switch (kind) {
+      case _DurIcon.tomato:
+        return t.pomodoroMinutes;
+      case _DurIcon.coffee:
+        return t.shortBreakMinutes;
+      case _DurIcon.couch:
+        return t.longBreakMinutes;
+    }
+  }
+
+  /// Apply a delta (+1 / -1) to the right setter on the provider.
+  void _write(TimerProvider t, int delta) {
+    switch (kind) {
+      case _DurIcon.tomato:
+        t.setPomodoroMinutes(t.pomodoroMinutes + delta);
+      case _DurIcon.coffee:
+        t.setShortBreakMinutes(t.shortBreakMinutes + delta);
+      case _DurIcon.couch:
+        t.setLongBreakMinutes(t.longBreakMinutes + delta);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final timer = context.watch<TimerProvider>();
+    final value = _read(timer).toString();
+
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
       decoration: BoxDecoration(
@@ -233,7 +254,7 @@ class _DurationRow extends StatelessWidget {
                     children: [
                       TextSpan(text: value),
                       TextSpan(
-                        text: unit,
+                        text: 'm',
                         style: TMText.display(
                           fontSize: 22,
                           color: TM.cream.withValues(alpha: 0.7),
@@ -244,9 +265,23 @@ class _DurationRow extends StatelessWidget {
                   ),
                 ),
               ),
-              const _StepButton(label: '−', shadowColor: TM.ink),
+              _StepButton(
+                label: '−',
+                shadowColor: TM.ink,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  _write(timer, -1);
+                },
+              ),
               const SizedBox(width: 8),
-              const _StepButton(label: '+', shadowColor: TM.lemon),
+              _StepButton(
+                label: '+',
+                shadowColor: TM.lemon,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  _write(timer, 1);
+                },
+              ),
             ],
           ),
         ],
@@ -255,25 +290,107 @@ class _DurationRow extends StatelessWidget {
   }
 }
 
-class _StepButton extends StatelessWidget {
+/// Chunky `−` / `+` stepper that fires [onTap] once on press and then
+/// auto-repeats while held. Tuned to feel like a physical knob: a short
+/// initial pause (so a quick tap reads as a single step), then ticks
+/// every 100 ms, accelerating to 55 ms after ~1 s of continuous hold.
+class _StepButton extends StatefulWidget {
   final String label;
   final Color shadowColor;
-  const _StepButton({required this.label, required this.shadowColor});
+  final VoidCallback onTap;
+  const _StepButton({
+    required this.label,
+    required this.shadowColor,
+    required this.onTap,
+  });
+
+  @override
+  State<_StepButton> createState() => _StepButtonState();
+}
+
+class _StepButtonState extends State<_StepButton> {
+  /// Delay between the initial tap and the start of auto-repeat. Long
+  /// enough that a quick tap is unambiguously a single step.
+  static const _holdDelay = Duration(milliseconds: 400);
+
+  /// Tick interval while held. Drops to [_fastInterval] after a second
+  /// of holding so the user can sweep across the range quickly.
+  static const _slowInterval = Duration(milliseconds: 100);
+  static const _fastInterval = Duration(milliseconds: 55);
+  static const _accelerateAfter = Duration(milliseconds: 1000);
+
+  Timer? _holdDelayTimer;
+  Timer? _repeatTimer;
+  Timer? _accelerateTimer;
+  bool _pressed = false;
+  bool _accelerated = false;
+
+  void _start() {
+    setState(() => _pressed = true);
+    widget.onTap();
+    _holdDelayTimer = Timer(_holdDelay, _beginRepeat);
+  }
+
+  void _beginRepeat() {
+    _accelerated = false;
+    _repeatTimer = Timer.periodic(_slowInterval, (_) => widget.onTap());
+    // After ~1 s of holding, swap to the fast tick. Single one-shot
+    // reschedule so we don't churn the timer every tick.
+    _accelerateTimer = Timer(_accelerateAfter, () {
+      if (!_pressed || _accelerated) return;
+      _accelerated = true;
+      _repeatTimer?.cancel();
+      _repeatTimer = Timer.periodic(_fastInterval, (_) => widget.onTap());
+    });
+  }
+
+  void _stop() {
+    _holdDelayTimer?.cancel();
+    _holdDelayTimer = null;
+    _accelerateTimer?.cancel();
+    _accelerateTimer = null;
+    _repeatTimer?.cancel();
+    _repeatTimer = null;
+    _accelerated = false;
+    if (_pressed) setState(() => _pressed = false);
+  }
+
+  @override
+  void dispose() {
+    _holdDelayTimer?.cancel();
+    _accelerateTimer?.cancel();
+    _repeatTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        color: TM.tomato,
-        border: Border.all(color: TM.ink, width: 2),
-        boxShadow: [BoxShadow(color: shadowColor, offset: const Offset(2, 2))],
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        label,
-        style: TMText.display(fontSize: 20, color: TM.cream, height: 1.0),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => _start(),
+      onTapUp: (_) => _stop(),
+      onTapCancel: _stop,
+      child: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: TM.tomato,
+          border: Border.all(color: TM.ink, width: 2),
+          // Shadow snaps in toward the body while pressed — same idiom
+          // the main control button uses, so the stepper feels part of
+          // the same family.
+          boxShadow: [
+            BoxShadow(
+              color: widget.shadowColor,
+              offset: _pressed ? const Offset(1, 1) : const Offset(2, 2),
+            ),
+          ],
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          widget.label,
+          style: TMText.display(fontSize: 20, color: TM.cream, height: 1.0),
+        ),
       ),
     );
   }
@@ -398,13 +515,33 @@ class _CycleMap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const segments = <_CycleSeg>[
-      _CycleSeg('P1', TM.tomato, done: true),
-      _CycleSeg('b', TM.mint, done: true, thin: true),
-      _CycleSeg('P2', TM.tomato, active: true),
-      _CycleSeg('b', TM.mint, thin: true),
-      _CycleSeg('P3', TM.tomato),
-      _CycleSeg('B', TM.cobalt, big: true),
+    final timer = context.watch<TimerProvider>();
+    // TimerPhase.values is in cycle order, so .index aligns with the
+    // segment list 1:1 (pomodoro1=0 .. longBreak=5).
+    final currentIdx = timer.phase.index;
+    // When the timer is idle (fresh start OR waiting between phases) we
+    // don't highlight an active segment — the user hasn't engaged yet.
+    final showActive = timer.status != TimerStatus.idle;
+
+    final segments = <_CycleSeg>[
+      _CycleSeg('P1', TM.tomato,
+          done: 0 < currentIdx, active: showActive && currentIdx == 0),
+      _CycleSeg('b', TM.mint,
+          done: 1 < currentIdx,
+          active: showActive && currentIdx == 1,
+          thin: true),
+      _CycleSeg('P2', TM.tomato,
+          done: 2 < currentIdx, active: showActive && currentIdx == 2),
+      _CycleSeg('b', TM.mint,
+          done: 3 < currentIdx,
+          active: showActive && currentIdx == 3,
+          thin: true),
+      _CycleSeg('P3', TM.tomato,
+          done: 4 < currentIdx, active: showActive && currentIdx == 4),
+      _CycleSeg('B', TM.cobalt,
+          done: 5 < currentIdx,
+          active: showActive && currentIdx == 5,
+          big: true),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -547,6 +684,7 @@ class _WorkflowMode extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final timer = context.watch<TimerProvider>();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -556,11 +694,15 @@ class _WorkflowMode extends StatelessWidget {
         ),
         const MarkerUnderline(width: 100, color: TM.cobalt),
         const SizedBox(height: 10),
-        const _ToggleCard(
+        _ToggleCard(
           title: 'Strict Mode',
           subtitle: 'disable pausing',
-          on: true,
+          on: timer.strictModeOn,
           shadowColor: TM.lemon,
+          onTap: () {
+            HapticFeedback.selectionClick();
+            timer.toggleStrictMode();
+          },
         ),
       ],
     );
@@ -572,11 +714,16 @@ class _SoundToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const _ToggleCard(
+    final timer = context.watch<TimerProvider>();
+    return _ToggleCard(
       title: 'Chime sounds',
       subtitle: 'a little "bip!" on completion',
-      on: false,
+      on: timer.chimeSoundsOn,
       shadowColor: null,
+      onTap: () {
+        HapticFeedback.selectionClick();
+        timer.toggleChimeSounds();
+      },
     );
   }
 }
@@ -586,11 +733,13 @@ class _ToggleCard extends StatelessWidget {
   final String subtitle;
   final bool on;
   final Color? shadowColor;
+  final VoidCallback onTap;
   const _ToggleCard({
     required this.title,
     required this.subtitle,
     required this.on,
     required this.shadowColor,
+    required this.onTap,
   });
 
   @override
@@ -624,7 +773,11 @@ class _ToggleCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          _PillToggle(on: on, shadowColor: shadowColor),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            child: _PillToggle(on: on, shadowColor: shadowColor),
+          ),
         ],
       ),
     );

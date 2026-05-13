@@ -20,22 +20,20 @@ enum TimerStatus { idle, running, paused }
 /// Pure in-memory timer state machine.
 ///
 /// Manages the 6-phase Pomodoro cycle with start / pause / reset and
-/// auto-advance when a phase completes.  All durations are currently
-/// hardcoded; settings-driven values come in a later step.
+/// auto-advance when a phase completes.  Durations and the strict /
+/// chime flags are runtime-mutable but in-memory only — they reset on
+/// app restart until Hive persistence is wired in a follow-up step.
 class TimerProvider extends ChangeNotifier {
-  // ── Hardcoded durations (seconds) ────────────────────────────────────
-  static const int _pomodoroSec = 25 * 60;
-  static const int _shortBreakSec = 5 * 60;
-  static const int _longBreakSec = 15 * 60;
+  // ── Configurable durations (minutes) ─────────────────────────────────
+  // Stored in minutes since that is the unit the UI exposes; converted
+  // to seconds on read. Bounds match the clamps in the public setters.
+  int _pomodoroMinutes = 25;
+  int _shortBreakMinutes = 5;
+  int _longBreakMinutes = 15;
 
-  static const _phaseDurations = <TimerPhase, int>{
-    TimerPhase.pomodoro1: _pomodoroSec,
-    TimerPhase.shortBreak1: _shortBreakSec,
-    TimerPhase.pomodoro2: _pomodoroSec,
-    TimerPhase.shortBreak2: _shortBreakSec,
-    TimerPhase.pomodoro3: _pomodoroSec,
-    TimerPhase.longBreak: _longBreakSec,
-  };
+  // ── Workflow flags ───────────────────────────────────────────────────
+  bool _strictMode = true;
+  bool _chimeSounds = false;
 
   // ── State ────────────────────────────────────────────────────────────
   TimerPhase _phase = TimerPhase.pomodoro1;
@@ -53,6 +51,12 @@ class TimerProvider extends ChangeNotifier {
   bool get isPaused => _status == TimerStatus.paused;
   bool get isIdle => _status == TimerStatus.idle;
   bool get isCelebrating => _celebrating;
+
+  int get pomodoroMinutes => _pomodoroMinutes;
+  int get shortBreakMinutes => _shortBreakMinutes;
+  int get longBreakMinutes => _longBreakMinutes;
+  bool get strictModeOn => _strictMode;
+  bool get chimeSoundsOn => _chimeSounds;
 
   /// How far through the current phase we are, 0.0 → 1.0.
   double get progress {
@@ -170,6 +174,59 @@ class TimerProvider extends ChangeNotifier {
     _advancePhase();
   }
 
+  // ── Settings mutators ────────────────────────────────────────────────
+  // Duration changes never disturb a phase that's already counting down
+  // (running OR paused — that countdown represents real elapsed focus
+  // and must not jump). But while the timer is idle the displayed
+  // remaining time still equals the phase's full duration, so we can
+  // safely re-snap it to the new value — gives the user a live preview
+  // in the timer display before they hit START.
+
+  void setPomodoroMinutes(int v) {
+    final clamped = v.clamp(5, 90);
+    if (clamped == _pomodoroMinutes) return;
+    _pomodoroMinutes = clamped;
+    _syncIdleRemaining();
+    notifyListeners();
+  }
+
+  void setShortBreakMinutes(int v) {
+    final clamped = v.clamp(1, 30);
+    if (clamped == _shortBreakMinutes) return;
+    _shortBreakMinutes = clamped;
+    _syncIdleRemaining();
+    notifyListeners();
+  }
+
+  void setLongBreakMinutes(int v) {
+    final clamped = v.clamp(5, 60);
+    if (clamped == _longBreakMinutes) return;
+    _longBreakMinutes = clamped;
+    _syncIdleRemaining();
+    notifyListeners();
+  }
+
+  /// While idle, the displayed remaining time always equals the current
+  /// phase's full duration (set at construction, on resetTimer, on
+  /// resetCycle, and on _advancePhase). Re-snap it whenever a duration
+  /// setting changes so the timer display reflects the new value live.
+  /// No-op if the change is for a different kind of phase than we're
+  /// currently sitting on.
+  void _syncIdleRemaining() {
+    if (_status != TimerStatus.idle) return;
+    _secondsRemaining = _durationForPhase(_phase);
+  }
+
+  void toggleStrictMode() {
+    _strictMode = !_strictMode;
+    notifyListeners();
+  }
+
+  void toggleChimeSounds() {
+    _chimeSounds = !_chimeSounds;
+    notifyListeners();
+  }
+
   // ── Internal ─────────────────────────────────────────────────────────
 
   void _tick() {
@@ -203,7 +260,19 @@ class TimerProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  static int _durationForPhase(TimerPhase p) => _phaseDurations[p]!;
+  int _durationForPhase(TimerPhase p) {
+    switch (p) {
+      case TimerPhase.pomodoro1:
+      case TimerPhase.pomodoro2:
+      case TimerPhase.pomodoro3:
+        return _pomodoroMinutes * 60;
+      case TimerPhase.shortBreak1:
+      case TimerPhase.shortBreak2:
+        return _shortBreakMinutes * 60;
+      case TimerPhase.longBreak:
+        return _longBreakMinutes * 60;
+    }
+  }
 
   @override
   void dispose() {

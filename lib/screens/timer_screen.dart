@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bip_mascot.dart';
+import '../widgets/control_button_effects.dart';
 import '../widgets/freeze_options_modal.dart';
 import '../widgets/freeze_overlay.dart';
 import '../widgets/motifs.dart';
@@ -702,78 +704,592 @@ class _PillStripePainter extends CustomPainter {
 
 // Control button — toggles between START / PAUSE / RESUME.
 // Skip / reset now live behind the freeze gesture on the timer digits.
+//
+// Overdrive build:
+//   - Press (onTapDown): vertical squash + horizontal stretch, lemon
+//     shadow snaps closer to the body, tomato2 misregistration ghost
+//     materialises behind the button. HapticFeedback.selectionClick.
+//   - Release into START / RESUME: tomato (or cobalt) shockwave ring
+//     expands and fades, 6 cream/lemon confetti streamers radiate from
+//     the centre, 5 sparks fly diagonal-up-right from the bolt anchor,
+//     the bolt scale-punches with rotation jitter, the label slams in
+//     with a tomato2 misreg ghost, button rebounds 1.0 → 1.06 → 1.0.
+//     HapticFeedback.heavyImpact.
+//   - Release into PAUSE: a soft cream2 ripple instead, no streamers /
+//     sparks, the bolt slumps to 35° and 0.8 scale (and stays there
+//     until the next RESUME / START). HapticFeedback.mediumImpact.
+//   - Idle: when status is idle, the bolt wiggles once every 5s as a
+//     tap invitation. Cancelled on the first interaction.
+//   - All motion respects MediaQuery.disableAnimations; haptics still
+//     fire under reduced motion (they're an accessibility-positive
+//     signal, not motion).
 
-class _ControlButton extends StatelessWidget {
+class _ControlButton extends StatefulWidget {
   const _ControlButton();
+
+  @override
+  State<_ControlButton> createState() => _ControlButtonState();
+}
+
+class _ControlButtonState extends State<_ControlButton>
+    with TickerProviderStateMixin {
+  late final AnimationController _pressCtrl;
+  late final AnimationController _burstCtrl;
+  late final AnimationController _idleHintCtrl;
+  // Drives the "no, you can't pause" horizontal shake when the user taps
+  // the button while Strict Mode + running has locked it.
+  late final AnimationController _shakeCtrl;
+  Timer? _idleNudgeTimer;
+  TimerStatus? _prevStatus;
+  bool? _prevStrictLocked;
+  BurstVariant _variant = BurstVariant.burst;
+
+  @override
+  void initState() {
+    super.initState();
+    _pressCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 110),
+    );
+    _burstCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 560),
+    );
+    _idleHintCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _shakeCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
+  }
+
+  @override
+  void dispose() {
+    _idleNudgeTimer?.cancel();
+    _pressCtrl.dispose();
+    _burstCtrl.dispose();
+    _idleHintCtrl.dispose();
+    _shakeCtrl.dispose();
+    super.dispose();
+  }
+
+  void _syncIdleNudge(TimerProvider timer) {
+    final reduced = MediaQuery.of(context).disableAnimations;
+    final shouldNudge = timer.isIdle && !reduced;
+    if (shouldNudge) {
+      _idleNudgeTimer ??= Timer.periodic(
+        const Duration(seconds: 5),
+        (_) {
+          if (!mounted) return;
+          if (!context.read<TimerProvider>().isIdle) return;
+          if (_idleHintCtrl.isAnimating) return;
+          _idleHintCtrl.forward(from: 0);
+        },
+      );
+    } else {
+      _idleNudgeTimer?.cancel();
+      _idleNudgeTimer = null;
+      if (_idleHintCtrl.isAnimating) _idleHintCtrl.stop();
+      _idleHintCtrl.value = 0;
+    }
+  }
+
+  void _onTapDown(TapDownDetails _) {
+    final reduced = MediaQuery.of(context).disableAnimations;
+    // Cancel idle hint immediately — user is interacting.
+    _idleNudgeTimer?.cancel();
+    _idleNudgeTimer = null;
+    if (_idleHintCtrl.isAnimating) _idleHintCtrl.stop();
+    _idleHintCtrl.value = 0;
+
+    if (!reduced) _pressCtrl.forward();
+    HapticFeedback.selectionClick();
+  }
+
+  void _onTapUp(TapUpDetails _) {
+    final timer = context.read<TimerProvider>();
+    final reduced = MediaQuery.of(context).disableAnimations;
+    final wasRunning = timer.isRunning;
+
+    // Strict Mode lock: the button is visible but inert. Acknowledge the
+    // tap with a light haptic and a brief horizontal head-shake; do NOT
+    // touch the timer state.
+    if (wasRunning && timer.strictModeOn) {
+      HapticFeedback.selectionClick();
+      if (reduced) {
+        _pressCtrl.value = 0;
+      } else {
+        _pressCtrl.reverse();
+        _shakeCtrl.forward(from: 0);
+      }
+      return;
+    }
+
+    if (wasRunning) {
+      _variant = BurstVariant.deflate;
+      timer.pauseTimer();
+      HapticFeedback.mediumImpact();
+    } else {
+      _variant = BurstVariant.burst;
+      timer.startTimer();
+      HapticFeedback.heavyImpact();
+    }
+
+    if (reduced) {
+      _pressCtrl.value = 0;
+    } else {
+      _pressCtrl.reverse();
+      _burstCtrl.forward(from: 0);
+    }
+  }
+
+  void _onTapCancel() {
+    final reduced = MediaQuery.of(context).disableAnimations;
+    if (!reduced) _pressCtrl.reverse();
+  }
+
+  String _labelFor(TimerStatus status, {bool strictLocked = false}) {
+    if (strictLocked && status == TimerStatus.running) return 'LOCKED';
+    switch (status) {
+      case TimerStatus.idle:
+        return 'START';
+      case TimerStatus.running:
+        return 'PAUSE';
+      case TimerStatus.paused:
+        return 'RESUME';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final timer = context.watch<TimerProvider>();
+    final reduced = MediaQuery.of(context).disableAnimations;
+    final strictLocked = timer.isRunning && timer.strictModeOn;
+    final label = _labelFor(timer.status, strictLocked: strictLocked);
+    final bgColor = timer.isFocusPhase ? TM.tomato : TM.cobalt;
+    final ringColor = timer.isFocusPhase ? TM.tomato : TM.cobalt;
 
-    // Button label depends on state.
-    final String label;
-    switch (timer.status) {
-      case TimerStatus.idle:
-        label = 'START';
-      case TimerStatus.running:
-        label = 'PAUSE';
-      case TimerStatus.paused:
-        label = 'RESUME';
+    // Re-sync the idle nudge timer on any status transition.
+    if (_prevStatus != timer.status) {
+      _prevStatus = timer.status;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncIdleNudge(timer);
+      });
     }
 
-    // Color shifts for break phases.
-    final bgColor = timer.isFocusPhase ? TM.tomato : TM.cobalt;
+    // When the user toggles Strict Mode from the drawer mid-session, the
+    // label needs to swap (PAUSE ↔ LOCKED). Reuse the existing _BurstLabel
+    // cross-fade by kicking _burstCtrl with the deflate variant — that
+    // gives us the scale + ghost label swap for free without spawning any
+    // confetti / sparks (those are gated on BurstVariant.burst).
+    if (_prevStrictLocked != null && _prevStrictLocked != strictLocked) {
+      if (!reduced) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _variant = BurstVariant.deflate;
+          _burstCtrl.forward(from: 0);
+        });
+      }
+    }
+    _prevStrictLocked = strictLocked;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 40),
       child: GestureDetector(
-        onTap: () {
-          if (timer.isRunning) {
-            timer.pauseTimer();
-          } else {
-            timer.startTimer();
-          }
-        },
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeOutCubic,
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                color: bgColor,
-                border: Border.all(color: TM.ink, width: 3),
-                borderRadius: BorderRadius.circular(999),
-                boxShadow: const [
-                  BoxShadow(color: TM.lemon, offset: Offset(4, 4)),
+        behavior: HitTestBehavior.opaque,
+        onTapDown: _onTapDown,
+        onTapUp: _onTapUp,
+        onTapCancel: _onTapCancel,
+        child: AnimatedBuilder(
+          animation: Listenable.merge(
+            <Listenable>[_pressCtrl, _burstCtrl, _idleHintCtrl, _shakeCtrl],
+          ),
+          builder: (context, _) {
+            final pressEase = Curves.easeOutQuart.transform(_pressCtrl.value);
+            final burst = _burstCtrl.value;
+
+            // Squash on press: horizontal 1.0 → 1.04, vertical 1.0 → 0.92.
+            final scaleX = 1.0 + 0.04 * pressEase;
+            final scaleY = 1.0 - 0.08 * pressEase;
+
+            // Rebound 1.0 → 1.06 → 1.0 in the first 260 ms of the burst
+            // (burst.value 0 → 0.46). Sin half-wave gives a clean overshoot
+            // without spring / elastic feel.
+            double rebound = 1.0;
+            if (!reduced && _variant == BurstVariant.burst && burst > 0 && burst < 0.46) {
+              final phase = burst / 0.46;
+              rebound = 1.0 + 0.06 * math.sin(phase * math.pi);
+            }
+            final effectiveScaleX = scaleX * rebound;
+            final effectiveScaleY = scaleY * rebound;
+
+            // Shadow offset interp during press: (4,4) → (1,1). When locked
+            // the shadow stays snapped at (1,1) regardless of press — the
+            // button reads as "already pushed in, going nowhere".
+            final shadowDx =
+                strictLocked ? 1.0 : 4.0 - 3.0 * pressEase;
+            final shadowDy =
+                strictLocked ? 1.0 : 4.0 - 3.0 * pressEase;
+
+            // Tomato2 misregistration ghost behind the button.
+            final ghostOpacity = 0.30 * pressEase;
+
+            final showBurst = !reduced && burst > 0 && burst < 1;
+            final showBurstVariant = showBurst && _variant == BurstVariant.burst;
+            final showDeflateVariant =
+                showBurst && _variant == BurstVariant.deflate;
+
+            // Locked head-shake: damped sine, ±6 px, dies out over 180 ms.
+            final shakeT = _shakeCtrl.value;
+            final shakeDx = shakeT > 0 && shakeT < 1
+                ? math.sin(shakeT * math.pi * 3) * 6 * (1 - shakeT)
+                : 0.0;
+
+            return Transform.translate(
+              offset: Offset(shakeDx, 0),
+              child: Transform.scale(
+              scaleX: effectiveScaleX,
+              scaleY: effectiveScaleY,
+              alignment: Alignment.center,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Tomato2 misregistration ghost (press feedback) — behind.
+                  if (!reduced && ghostOpacity > 0.005)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Transform.translate(
+                          offset: const Offset(-5, 3),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: TM.tomato2.withValues(alpha: ghostOpacity),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // Deflate ripple — BEHIND the button.
+                  if (showDeflateVariant)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          painter: DeflateRipplePainter(
+                            progress: burst,
+                            color: TM.cream2,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // Main button body.
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeOutCubic,
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    decoration: BoxDecoration(
+                      color: bgColor,
+                      border: Border.all(color: TM.ink, width: 3),
+                      borderRadius: BorderRadius.circular(999),
+                      boxShadow: [
+                        BoxShadow(
+                          color: TM.lemon,
+                          offset: Offset(shadowDx, shadowDy),
+                        ),
+                      ],
+                    ),
+                    alignment: Alignment.center,
+                    child: _BurstLabel(
+                      label: label,
+                      burst: burst,
+                      variant: _variant,
+                      reducedMotion: reduced,
+                    ),
+                  ),
+
+                  // Shockwave ring — OVER the button.
+                  if (showBurstVariant)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          painter: ShockwaveRingPainter(
+                            progress: burst,
+                            color: ringColor,
+                          ),
+                        ),
+                      ),
+                    ),
+
+                  // Confetti streamers (radiating from centre).
+                  if (showBurstVariant)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          painter: ConfettiStreamerPainter(progress: burst),
+                        ),
+                      ),
+                    ),
+
+                  // Sparks near the bolt anchor (top-right).
+                  if (showBurstVariant)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          painter: SparkBurstPainter(progress: burst),
+                        ),
+                      ),
+                    ),
+
+                  // Bolt — animated punch / slump / idle wiggle.
+                  Positioned(
+                    top: -8,
+                    right: 16,
+                    child: _AnimatedBolt(
+                      burst: burst,
+                      variant: _variant,
+                      idleHint: _idleHintCtrl.value,
+                      timerStatus: timer.status,
+                      reducedMotion: reduced,
+                      locked: strictLocked,
+                    ),
+                  ),
                 ],
               ),
-              alignment: Alignment.center,
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: Text(
-                  label,
-                  key: ValueKey(label),
-                  style: TMText.display(
-                    fontSize: 20,
-                    letterSpacing: 3,
-                    color: TM.cream,
-                  ),
-                ),
               ),
-            ),
-            Positioned(
-              top: -8,
-              right: 16,
-              child: Transform.rotate(
-                angle: 12 * math.pi / 180,
-                child: const Bolt(size: 20, color: TM.lemon),
-              ),
-            ),
-          ],
+            );
+          },
         ),
+      ),
+    );
+  }
+}
+
+/// Label rendered inside the control button.
+///
+/// On a state change, the old label scales+fades down while the new label
+/// scales 1.3 → 1.0. On the START / RESUME variant, a tomato2 misregistration
+/// ghost copy of the new label converges from offset (-3, +2) → (0, 0) and
+/// fades out, echoing the timer digits' misreg ghost.
+class _BurstLabel extends StatefulWidget {
+  final String label;
+  final double burst;
+  final BurstVariant variant;
+  final bool reducedMotion;
+
+  const _BurstLabel({
+    required this.label,
+    required this.burst,
+    required this.variant,
+    required this.reducedMotion,
+  });
+
+  @override
+  State<_BurstLabel> createState() => _BurstLabelState();
+}
+
+class _BurstLabelState extends State<_BurstLabel> {
+  String? _outgoingLabel;
+
+  @override
+  void didUpdateWidget(covariant _BurstLabel old) {
+    super.didUpdateWidget(old);
+    if (old.label != widget.label) {
+      // Capture the previous label so it can fade out alongside the
+      // incoming one.  Set on label change wins over the reset-cleanup
+      // branch below — rapid taps arrive as (burst goes 1.0 → 0.0 AND
+      // label changes) in the same frame.
+      _outgoingLabel = old.label;
+    } else if (widget.burst == 0 && old.burst > 0) {
+      // Burst fully reset without a label change — clean up so the next
+      // press doesn't paint a stale outgoing label.
+      _outgoingLabel = null;
+    }
+  }
+
+  TextStyle _style({Color color = TM.cream}) => TMText.display(
+        fontSize: 20,
+        letterSpacing: 3,
+        color: color,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.reducedMotion || widget.burst == 0 || widget.burst >= 1) {
+      return Text(widget.label, style: _style());
+    }
+
+    final isBurstVariant = widget.variant == BurstVariant.burst;
+    final outEnd = isBurstVariant ? 0.21 : 0.30;
+    final inEnd = isBurstVariant ? 0.39 : 0.54;
+
+    // Incoming label.
+    final newT = (widget.burst / inEnd).clamp(0.0, 1.0);
+    final newEase = Curves.easeOutExpo.transform(newT);
+    final newScale = 1.3 - 0.3 * newEase;
+    final ghostT = (1 - newEase).clamp(0.0, 1.0);
+
+    Widget incoming = Transform.scale(
+      scale: newScale,
+      child: Text(widget.label, style: _style()),
+    );
+
+    // Outgoing (previous) label.
+    Widget? outgoing;
+    if (_outgoingLabel != null && widget.burst < outEnd) {
+      final outT = (widget.burst / outEnd).clamp(0.0, 1.0);
+      final outEase = Curves.easeOutQuart.transform(outT);
+      final outScale = (1.0 - outEase).clamp(0.0, 1.0);
+      final outOpacity = (1.0 - outEase).clamp(0.0, 1.0);
+      outgoing = IgnorePointer(
+        child: Opacity(
+          opacity: outOpacity,
+          child: Transform.scale(
+            scale: outScale,
+            child: Text(_outgoingLabel!, style: _style()),
+          ),
+        ),
+      );
+    }
+
+    // Misregistration ghost (only on the burst variant).
+    Widget? ghost;
+    if (isBurstVariant && ghostT > 0.01) {
+      final dx = -3.0 * ghostT;
+      final dy = 2.0 * ghostT;
+      ghost = IgnorePointer(
+        child: Transform.translate(
+          offset: Offset(dx, dy),
+          child: Transform.scale(
+            scale: newScale,
+            child: Text(
+              widget.label,
+              style: _style(color: TM.tomato2.withValues(alpha: ghostT)),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Stack(
+      alignment: Alignment.center,
+      children: <Widget>[
+        if (ghost != null) ghost,
+        incoming,
+        if (outgoing != null) outgoing,
+      ],
+    );
+  }
+}
+
+/// Bolt that scale-punches and rotation-jitters on START / RESUME, smoothly
+/// slumps on PAUSE (and holds the slumped pose until the next start/resume),
+/// and does a single tap-invitation wiggle every 5 s while the timer is idle.
+class _AnimatedBolt extends StatelessWidget {
+  final double burst;
+  final BurstVariant variant;
+  final double idleHint;
+  final TimerStatus timerStatus;
+  final bool reducedMotion;
+  final bool locked;
+
+  const _AnimatedBolt({
+    required this.burst,
+    required this.variant,
+    required this.idleHint,
+    required this.timerStatus,
+    required this.reducedMotion,
+    this.locked = false,
+  });
+
+  static const double _restRotDeg = 12;
+  static const double _slumpRotDeg = 35;
+
+  @override
+  Widget build(BuildContext context) {
+    if (reducedMotion) {
+      // Locked under reduced motion: hold the slump pose so the visual
+      // still reads as "powered down"; otherwise a static rest pose.
+      return Transform.scale(
+        scale: locked ? 0.8 : 1.0,
+        child: Transform.rotate(
+          angle: (locked ? _slumpRotDeg : _restRotDeg) * math.pi / 180,
+          child: const Bolt(size: 20, color: TM.lemon),
+        ),
+      );
+    }
+
+    // Locked + idle (no in-flight burst): hold the slump pose. The
+    // (burst == 0 || burst >= 1) guard lets a start-of-session burst
+    // still punch the bolt before it settles into the lock.
+    if (locked && (burst == 0 || burst >= 1)) {
+      return Transform.scale(
+        scale: 0.8,
+        child: Transform.rotate(
+          angle: _slumpRotDeg * math.pi / 180,
+          child: const Bolt(size: 20, color: TM.lemon),
+        ),
+      );
+    }
+
+    double rotDeg = _restRotDeg;
+    double scale = 1.0;
+
+    if (timerStatus == TimerStatus.paused) {
+      // Slumped pose. Lerp from rest → slump if we just paused (variant=deflate).
+      if (variant == BurstVariant.deflate && burst > 0 && burst < 1) {
+        final t = Curves.easeOutQuart.transform(burst);
+        rotDeg = _restRotDeg + (_slumpRotDeg - _restRotDeg) * t;
+        scale = 1.0 - 0.2 * t;
+      } else {
+        rotDeg = _slumpRotDeg;
+        scale = 0.8;
+      }
+    } else {
+      // Running or idle: rest pose, with optional burst punch or idle wiggle.
+      if (variant == BurstVariant.burst && burst > 0 && burst < 1) {
+        // Three-stage scale punch:
+        //   burst 0.00 → 0.18: 0.6 → 1.35 (fast pop)
+        //   burst 0.18 → 0.50: 1.35 → 1.0 (settle)
+        //   burst 0.50 → 1.00: 1.0 (rest)
+        if (burst < 0.18) {
+          final t = burst / 0.18;
+          scale = 0.6 + 0.75 * Curves.easeOutExpo.transform(t);
+        } else if (burst < 0.50) {
+          final t = (burst - 0.18) / 0.32;
+          scale = 1.35 - 0.35 * Curves.easeOutQuart.transform(t);
+        } else {
+          scale = 1.0;
+        }
+        // Rotation jitter falls off as burst progresses.
+        final jitterAmp = 18 * (1 - burst);
+        rotDeg = _restRotDeg + math.sin(burst * math.pi * 8) * jitterAmp;
+      } else if (idleHint > 0 && timerStatus == TimerStatus.idle) {
+        // Idle wiggle: 12° → 0° → 22° → 12° across the 600 ms controller.
+        final t = idleHint;
+        if (t < 0.33) {
+          final p = t / 0.33;
+          rotDeg = _restRotDeg +
+              (0 - _restRotDeg) * Curves.easeOutQuart.transform(p);
+        } else if (t < 0.66) {
+          final p = (t - 0.33) / 0.33;
+          rotDeg = 0 + (22 - 0) * Curves.easeOutQuart.transform(p);
+        } else {
+          final p = (t - 0.66) / 0.34;
+          rotDeg = 22 +
+              (_restRotDeg - 22) * Curves.easeOutQuart.transform(p);
+        }
+      }
+    }
+
+    return Transform.scale(
+      scale: scale,
+      child: Transform.rotate(
+        angle: rotDeg * math.pi / 180,
+        child: const Bolt(size: 20, color: TM.lemon),
       ),
     );
   }
