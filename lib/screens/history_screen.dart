@@ -1,5 +1,8 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../models/session_record.dart';
+import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
 
@@ -14,49 +17,6 @@ class HistoryScreen extends StatefulWidget {
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
-
-  static const _today = <_HistoryEntry>[
-    _HistoryEntry(
-      task: 'Refactor UI Engine',
-      time: 'Today, 10:30 AM – 10:55 AM',
-      duration: '25m',
-      isPomo: true,
-    ),
-    _HistoryEntry(
-      task: null,
-      time: 'Today, 10:00 AM – 10:05 AM',
-      duration: '5m',
-      isPomo: false,
-    ),
-    _HistoryEntry(
-      task: 'Refactor UI Engine',
-      time: 'Today, 9:30 AM – 9:55 AM',
-      duration: '25m',
-      isPomo: true,
-    ),
-  ];
-
-  static const _yesterday = <_HistoryEntry>[
-    _HistoryEntry(
-      task: 'Fix Bug #104',
-      time: 'Yesterday, 4:15 PM – 4:40 PM',
-      duration: '25m',
-      isPomo: true,
-    ),
-    _HistoryEntry(
-      task: null,
-      time: 'Yesterday, 3:55 PM – 4:10 PM',
-      duration: '15m',
-      isPomo: false,
-    ),
-    _HistoryEntry(
-      task: 'water the plant',
-      time: 'Yesterday, 2:30 PM – 2:55 PM',
-      duration: '25m',
-      isPomo: true,
-    ),
-  ];
-
 }
 
 class _HistoryScreenState extends State<HistoryScreen>
@@ -92,25 +52,7 @@ class _HistoryScreenState extends State<HistoryScreen>
 
   @override
   Widget build(BuildContext context) {
-    final today = HistoryScreen._today;
-    final yesterday = HistoryScreen._yesterday;
-    final items = <Widget>[
-      _DayDivider(label: 'today', count: today.length),
-      ...today.map(
-        (e) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-          child: _HistoryRow(entry: e),
-        ),
-      ),
-      const SizedBox(height: 10),
-      _DayDivider(label: 'yesterday', count: yesterday.length),
-      ...yesterday.map(
-        (e) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-          child: _HistoryRow(entry: e),
-        ),
-      ),
-    ];
+    final sessions = context.watch<SessionProvider>().pomodorosNewestFirst;
 
     return Stack(
       fit: StackFit.expand,
@@ -122,22 +64,13 @@ class _HistoryScreenState extends State<HistoryScreen>
             children: [
               const _Header(),
               Expanded(
-                child: SingleChildScrollView(
-                  controller: _scroll,
-                  padding: const EdgeInsets.only(bottom: 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      for (int i = 0; i < items.length; i++)
-                        _StaggeredEntry(
-                          controller: _ctrl,
-                          index: i,
-                          total: items.length,
-                          child: items[i],
-                        ),
-                    ],
-                  ),
-                ),
+                child: sessions.isEmpty
+                    ? const _EmptyState()
+                    : _HistoryList(
+                        sessions: sessions,
+                        scroll: _scroll,
+                        ctrl: _ctrl,
+                      ),
               ),
             ],
           ),
@@ -146,6 +79,159 @@ class _HistoryScreenState extends State<HistoryScreen>
     );
   }
 }
+
+// ── List & grouping ──────────────────────────────────────────────────
+
+/// Renders the day-grouped, staggered-in list of pomodoro entries.
+class _HistoryList extends StatelessWidget {
+  final List<SessionRecord> sessions;
+  final ScrollController scroll;
+  final AnimationController ctrl;
+
+  const _HistoryList({
+    required this.sessions,
+    required this.scroll,
+    required this.ctrl,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final today = _dayKey(now);
+    final yesterday = today.subtract(const Duration(days: 1));
+
+    // Group sessions by calendar day, preserving newest-first order
+    // since the input is already sorted that way.
+    final grouped = <DateTime, List<SessionRecord>>{};
+    for (final s in sessions) {
+      grouped.putIfAbsent(_dayKey(s.startTime), () => []).add(s);
+    }
+    final dayKeys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
+
+    // Flatten into a single child list (divider per day, then rows).
+    final items = <Widget>[];
+    for (final day in dayKeys) {
+      final entries = grouped[day]!;
+      final label = day == today
+          ? 'today'
+          : day == yesterday
+              ? 'yesterday'
+              : _formatDayLabel(day);
+      items.add(_DayDivider(label: label, count: entries.length));
+      for (final e in entries) {
+        items.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+            child: _HistoryRow(entry: e, sessionDay: day, today: today, yesterday: yesterday),
+          ),
+        );
+      }
+      items.add(const SizedBox(height: 10));
+    }
+
+    return SingleChildScrollView(
+      controller: scroll,
+      padding: const EdgeInsets.only(bottom: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (int i = 0; i < items.length; i++)
+            _StaggeredEntry(
+              controller: ctrl,
+              index: i,
+              total: items.length,
+              child: items[i],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+DateTime _dayKey(DateTime t) => DateTime(t.year, t.month, t.day);
+
+const _weekdays = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const _months = [
+  'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+  'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+];
+
+/// Formats a non-today/non-yesterday day key as e.g. `mon, may 13`.
+String _formatDayLabel(DateTime day) {
+  // DateTime.weekday returns 1 (Mon) .. 7 (Sun).
+  final dow = _weekdays[day.weekday - 1];
+  final mon = _months[day.month - 1];
+  return '$dow, $mon ${day.day}';
+}
+
+/// Formats a wall-clock time as `H:MM AM/PM` (12-hour, no leading zero
+/// on the hour to match the design's `10:30 AM` style).
+String _formatTime(DateTime t) {
+  final hour12 = t.hour == 0 ? 12 : (t.hour > 12 ? t.hour - 12 : t.hour);
+  final mins = t.minute.toString().padLeft(2, '0');
+  final ampm = t.hour < 12 ? 'AM' : 'PM';
+  return '$hour12:$mins $ampm';
+}
+
+/// Formats a duration in minutes as the duration pill text. Pomodoros
+/// today are typically 25m; long sessions clamp to `Hh Mm` so the pill
+/// stays compact even for a 90-minute focus block.
+String _formatDuration(int minutes) {
+  if (minutes < 60) return '${minutes}m';
+  final h = minutes ~/ 60;
+  final m = minutes % 60;
+  return m == 0 ? '${h}h' : '${h}h ${m}m';
+}
+
+// ── Empty state ──────────────────────────────────────────────────────
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Transform.rotate(
+              angle: -3 * math.pi / 180,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: TM.ink2,
+                  border: Border.all(color: TM.dim2, width: 2),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: const [
+                    BoxShadow(color: TM.tomato2, offset: Offset(3, 3)),
+                  ],
+                ),
+                child: Text(
+                  'no tomatoes yet',
+                  style: TMText.marker(fontSize: 28, color: TM.cream),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'finish a pomodoro and it lands here.',
+              textAlign: TextAlign.center,
+              style: TMText.ui(
+                fontSize: 12,
+                letterSpacing: 0.4,
+                color: TM.cream.withValues(alpha: 0.55),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Stagger ──────────────────────────────────────────────────────────
 
 /// Wraps a child in a fade + slide-up driven by a slice of [controller]'s
 /// progress. Slice = `[index/total .. index/total + window]`, clamped to 1.
@@ -187,20 +273,7 @@ class _StaggeredEntry extends StatelessWidget {
   }
 }
 
-class _HistoryEntry {
-  final String? task;
-  final String time;
-  final String duration;
-  final bool isPomo;
-  const _HistoryEntry({
-    required this.task,
-    required this.time,
-    required this.duration,
-    required this.isPomo,
-  });
-}
-
-// Header
+// ── Header ───────────────────────────────────────────────────────────
 
 class _Header extends StatelessWidget {
   const _Header();
@@ -223,7 +296,7 @@ class _Header extends StatelessWidget {
   }
 }
 
-// Day divider
+// ── Day divider ──────────────────────────────────────────────────────
 
 class _DayDivider extends StatelessWidget {
   final String label;
@@ -250,7 +323,7 @@ class _DayDivider extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           Text(
-            '$count SESSIONS',
+            count == 1 ? '1 SESSION' : '$count SESSIONS',
             style: TMText.ui(
               fontSize: 10,
               letterSpacing: 2,
@@ -263,33 +336,54 @@ class _DayDivider extends StatelessWidget {
   }
 }
 
-// History row
+// ── History row ──────────────────────────────────────────────────────
 
 class _HistoryRow extends StatelessWidget {
-  final _HistoryEntry entry;
-  const _HistoryRow({required this.entry});
+  final SessionRecord entry;
+  final DateTime sessionDay;
+  final DateTime today;
+  final DateTime yesterday;
+  const _HistoryRow({
+    required this.entry,
+    required this.sessionDay,
+    required this.today,
+    required this.yesterday,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final borderColor = entry.isPomo ? TM.tomato : TM.cream2;
+    // Always tomato-coloured — breaks aren't persisted, so every row is
+    // a pomodoro. (Keeping the design's left-border accent intact.)
+    const borderColor = TM.tomato;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: TM.ink2,
-        border: Border(
-          top: const BorderSide(color: TM.dim2, width: 2),
-          right: const BorderSide(color: TM.dim2, width: 2),
-          bottom: const BorderSide(color: TM.dim2, width: 2),
+        border: const Border(
+          top: BorderSide(color: TM.dim2, width: 2),
+          right: BorderSide(color: TM.dim2, width: 2),
+          bottom: BorderSide(color: TM.dim2, width: 2),
           left: BorderSide(color: borderColor, width: 4),
         ),
       ),
       child: Row(
         children: [
-          _EntryIcon(isPomo: entry.isPomo),
+          const _EntryIcon(),
           const SizedBox(width: 12),
-          Expanded(child: _EntryContent(entry: entry)),
-          const SizedBox(width: 8),
-          _DurationPill(duration: entry.duration, isPomo: entry.isPomo),
+          Expanded(
+            child: _EntryContent(
+              entry: entry,
+              sessionDay: sessionDay,
+              today: today,
+              yesterday: yesterday,
+            ),
+          ),
+          // Skipped rows omit the duration pill — they carry no real
+          // time data, so a pill would be misleading.
+          if (!entry.skipped) ...[
+            const SizedBox(width: 8),
+            _DurationPill(duration: _formatDuration(entry.durationMinutes)),
+          ],
         ],
       ),
     );
@@ -297,8 +391,7 @@ class _HistoryRow extends StatelessWidget {
 }
 
 class _EntryIcon extends StatelessWidget {
-  final bool isPomo;
-  const _EntryIcon({required this.isPomo});
+  const _EntryIcon();
 
   @override
   Widget build(BuildContext context) {
@@ -306,19 +399,15 @@ class _EntryIcon extends StatelessWidget {
       width: 36,
       height: 36,
       decoration: BoxDecoration(
-        color: isPomo ? TM.tomato : TM.dim,
+        color: TM.tomato,
         border: Border.all(color: TM.ink, width: 2),
         borderRadius: BorderRadius.circular(8),
       ),
       alignment: Alignment.center,
-      child: SizedBox(
+      child: const SizedBox(
         width: 22,
         height: 22,
-        child: CustomPaint(
-          painter: isPomo
-              ? const _TomatoIconPainter()
-              : const _CoffeeIconPainter(),
-        ),
+        child: CustomPaint(painter: _TomatoIconPainter()),
       ),
     );
   }
@@ -356,62 +445,47 @@ class _TomatoIconPainter extends CustomPainter {
   bool shouldRepaint(covariant _TomatoIconPainter old) => false;
 }
 
-class _CoffeeIconPainter extends CustomPainter {
-  const _CoffeeIconPainter();
-
-  @override
-  void paint(Canvas c, Size s) {
-    final k = s.width / 20.0;
-    final stroke = Paint()
-      ..color = TM.cream
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2 * k
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final cup = Path()
-      ..moveTo(4 * k, 8 * k)
-      ..lineTo(14 * k, 8 * k)
-      ..lineTo(13 * k, 16 * k)
-      ..lineTo(5 * k, 16 * k)
-      ..close();
-    c.drawPath(cup, stroke);
-    final handle = Path()
-      ..moveTo(14 * k, 10 * k)
-      ..quadraticBezierTo(18 * k, 10 * k, 18 * k, 13 * k)
-      ..quadraticBezierTo(18 * k, 15 * k, 14 * k, 14 * k);
-    c.drawPath(handle, stroke);
-    final steamPaint = Paint()
-      ..color = TM.cream
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.6 * k
-      ..strokeCap = StrokeCap.round;
-    final steam1 = Path()
-      ..moveTo(7 * k, 4 * k)
-      ..quadraticBezierTo(7 * k, 6 * k, 8 * k, 6 * k);
-    final steam2 = Path()
-      ..moveTo(10 * k, 3 * k)
-      ..quadraticBezierTo(10 * k, 5 * k, 11 * k, 5 * k);
-    c.drawPath(steam1, steamPaint);
-    c.drawPath(steam2, steamPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _CoffeeIconPainter old) => false;
-}
-
 class _EntryContent extends StatelessWidget {
-  final _HistoryEntry entry;
-  const _EntryContent({required this.entry});
+  final SessionRecord entry;
+  final DateTime sessionDay;
+  final DateTime today;
+  final DateTime yesterday;
+  const _EntryContent({
+    required this.entry,
+    required this.sessionDay,
+    required this.today,
+    required this.yesterday,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final hasTask = entry.task != null;
+    final hasTask = entry.taskName != null && entry.taskName!.isNotEmpty;
+
+    // Skipped rows carry no real time data — drop the timestamp line
+    // and label the row "(skipped)" instead. The task name (or "no
+    // task selected" fallback) stays so the user can still see what
+    // was bailed on.
+    final String subtitle;
+    if (entry.skipped) {
+      subtitle = '(skipped)';
+    } else {
+      // Day prefix matches the dividers above — capitalised because it
+      // sits inside a full sentence-style label.
+      final dayPrefix = sessionDay == today
+          ? 'Today'
+          : sessionDay == yesterday
+              ? 'Yesterday'
+              : _formatDayLabel(sessionDay);
+      subtitle =
+          '$dayPrefix, ${_formatTime(entry.startTime)} – ${_formatTime(entry.endTime)}';
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
-          hasTask ? entry.task! : '(no task selected)',
+          hasTask ? entry.taskName! : '(no task selected)',
           style: TMText.marker(
             fontSize: 22,
             color: hasTask ? TM.cream : const Color(0xFF6A665F),
@@ -422,7 +496,7 @@ class _EntryContent extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         Text(
-          entry.time,
+          subtitle,
           style: TMText.ui(
             fontSize: 11,
             letterSpacing: 0.3,
@@ -436,8 +510,7 @@ class _EntryContent extends StatelessWidget {
 
 class _DurationPill extends StatelessWidget {
   final String duration;
-  final bool isPomo;
-  const _DurationPill({required this.duration, required this.isPomo});
+  const _DurationPill({required this.duration});
 
   @override
   Widget build(BuildContext context) {
@@ -446,7 +519,7 @@ class _DurationPill extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: isPomo ? TM.tomato : TM.dim,
+          color: TM.tomato,
           border: Border.all(color: TM.ink, width: 2),
           borderRadius: BorderRadius.circular(6),
         ),

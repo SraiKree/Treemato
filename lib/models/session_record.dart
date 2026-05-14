@@ -25,6 +25,12 @@ class SessionRecord extends HiveObject {
   @HiveField(6)
   bool isPomodoro; // false = break
 
+  /// Skipped focus phases are still logged so the user sees them in
+  /// history, but startTime/endTime/durationMinutes are placeholders —
+  /// the row renders task-name + "(skipped)" only.
+  @HiveField(7)
+  bool skipped;
+
   SessionRecord({
     required this.id,
     this.taskId,
@@ -33,5 +39,6 @@ class SessionRecord extends HiveObject {
     required this.endTime,
     required this.durationMinutes,
     required this.isPomodoro,
+    this.skipped = false,
   });
 }

@@ -39,9 +39,24 @@ class TimerProvider extends ChangeNotifier {
   /// provider so the active task's remaining count drops by one.
   final VoidCallback? onFocusCompleted;
 
+  /// Fired every time a focus phase ends — either by natural countdown
+  /// ([skipped] = false) or via `skipPhase()` ([skipped] = true). Wired
+  /// in `main.dart` to the session provider so both outcomes show up in
+  /// history. Always fires *before* [onFocusCompleted] so the wiring
+  /// can snapshot the active task before [TaskProvider.decrementActive]
+  /// potentially clears it. Skipped firings pass placeholder time
+  /// values; the History row hides them anyway.
+  final void Function(
+    DateTime startTime,
+    DateTime endTime,
+    int durationMinutes,
+    bool skipped,
+  )? onFocusSessionCompleted;
+
   TimerProvider({
     required Box<dynamic> settingsBox,
     this.onFocusCompleted,
+    this.onFocusSessionCompleted,
   }) : _box = settingsBox {
     _pomodoroMinutes = (_box.get(_kPomodoroMinutes) as int?) ?? 25;
     _shortBreakMinutes = (_box.get(_kShortBreakMinutes) as int?) ?? 5;
@@ -81,6 +96,12 @@ class TimerProvider extends ChangeNotifier {
 
   Timer? _ticker;
   bool _celebrating = false;
+
+  // Wall-clock timestamp captured the first time the user starts a focus
+  // phase. Survives pauses (so the recorded session reflects the real
+  // span from kick-off to finish). Cleared on every phase boundary and
+  // on either reset path so an aborted focus phase produces no record.
+  DateTime? _focusPhaseStartedAt;
 
   // Set when the user reshapes the cycle (pomodorosPerCycle or
   // shortBreaksOn) while a phase is mid-flight. Consumed inside
@@ -168,6 +189,12 @@ class TimerProvider extends ChangeNotifier {
   void startTimer() {
     if (_status == TimerStatus.running) return;
     _celebrating = false;
+    // Stamp the focus session's start at the *first* run of this phase.
+    // Resumes after a pause keep the original stamp so the recorded
+    // session reflects the real wall-clock span.
+    if (phase == TimerPhase.focus && _focusPhaseStartedAt == null) {
+      _focusPhaseStartedAt = DateTime.now();
+    }
     _status = TimerStatus.running;
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
@@ -189,6 +216,7 @@ class TimerProvider extends ChangeNotifier {
     _celebrating = false;
     _status = TimerStatus.idle;
     _secondsRemaining = _durationForPhase(phase);
+    _focusPhaseStartedAt = null;
     notifyListeners();
   }
 
@@ -199,13 +227,15 @@ class TimerProvider extends ChangeNotifier {
     _phaseIndex = 0;
     _status = TimerStatus.idle;
     _secondsRemaining = _durationForPhase(phase);
+    _focusPhaseStartedAt = null;
     notifyListeners();
   }
 
   /// Manually skip to the next phase (useful for testing / skipping breaks).
+  /// Skips do NOT log a session record — only natural completions do.
   void skipPhase() {
     _celebrating = false;
-    _advancePhase();
+    _advancePhase(natural: false);
   }
 
   // ── Settings mutators ────────────────────────────────────────────────
@@ -332,9 +362,13 @@ class TimerProvider extends ChangeNotifier {
     }
   }
 
-  void _advancePhase() {
+  void _advancePhase({bool natural = true}) {
     _ticker?.cancel();
     final completedPhase = _sequence[_phaseIndex];
+    // Snapshot before clearing — the session-completed callback fires
+    // below and needs the stamp captured at first-start of this phase.
+    final startedAt = _focusPhaseStartedAt;
+    _focusPhaseStartedAt = null;
 
     if (_pendingSequenceRebuild) {
       // Shape edit landed while the timer was running/paused — current
@@ -353,6 +387,17 @@ class TimerProvider extends ChangeNotifier {
     // Celebrate for ~3 seconds after completing a focus phase.
     if (completedPhase == TimerPhase.focus) {
       _celebrating = true;
+      // Session record FIRST so the wiring in main.dart can read the
+      // active task before onFocusCompleted potentially clears it.
+      // Natural completion → real start stamp, configured duration.
+      // Skip → placeholder stamps (the History row ignores them).
+      final now = DateTime.now();
+      onFocusSessionCompleted?.call(
+        startedAt ?? now,
+        now,
+        natural ? _pomodoroMinutes : 0,
+        !natural,
+      );
       onFocusCompleted?.call();
     }
 

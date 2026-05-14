@@ -24,13 +24,16 @@ class SessionRecordAdapter extends TypeAdapter<SessionRecord> {
       endTime: fields[4] as DateTime,
       durationMinutes: fields[5] as int,
       isPomodoro: fields[6] as bool,
+      // Defaults to false so records written by the v1 adapter (no
+      // field 7) deserialize cleanly as non-skipped sessions.
+      skipped: (fields[7] as bool?) ?? false,
     );
   }
 
   @override
   void write(BinaryWriter writer, SessionRecord obj) {
     writer
-      ..writeByte(7)
+      ..writeByte(8)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -44,7 +47,9 @@ class SessionRecordAdapter extends TypeAdapter<SessionRecord> {
       ..writeByte(5)
       ..write(obj.durationMinutes)
       ..writeByte(6)
-      ..write(obj.isPomodoro);
+      ..write(obj.isPomodoro)
+      ..writeByte(7)
+      ..write(obj.skipped);
   }
 
   @override

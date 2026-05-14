@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'suitcase_entrance.dart';
 
 /// Outcome of [showFreezeOptions]. `null` means the user dismissed without
 /// choosing (tap-outside).
@@ -16,22 +17,14 @@ Future<FreezeChoice?> showFreezeOptions(BuildContext context) {
     barrierDismissible: true,
     barrierLabel: 'dismiss freeze options',
     barrierColor: TM.ink.withValues(alpha: 0.55),
-    transitionDuration: const Duration(milliseconds: 220),
-    pageBuilder: (_, __, ___) => const _FreezeOptionsBody(),
-    transitionBuilder: (_, anim, __, child) {
-      final scale = Tween<double>(begin: 0.85, end: 1.0).animate(
-        CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
-      );
-      return FadeTransition(
-        opacity: anim,
-        child: ScaleTransition(scale: scale, child: child),
-      );
-    },
+    transitionDuration: const Duration(milliseconds: 700),
+    pageBuilder: (_, anim, __) => _FreezeOptionsBody(animation: anim),
   );
 }
 
 class _FreezeOptionsBody extends StatelessWidget {
-  const _FreezeOptionsBody();
+  final Animation<double> animation;
+  const _FreezeOptionsBody({required this.animation});
 
   @override
   Widget build(BuildContext context) {
@@ -41,24 +34,40 @@ class _FreezeOptionsBody extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _StickerButton(
-              label: 'SKIP THIS ONE  →',
-              fill: TM.tomato,
-              textColor: TM.cream,
-              shadowColor: TM.ink,
-              rotation: -2 * math.pi / 180,
-              onTap: () =>
-                  Navigator.of(context).pop(FreezeChoice.skip),
+            SuitcaseItem(
+              animation: animation,
+              delayFraction: 0.10,
+              spanFraction: 0.70,
+              fromOffset: const Offset(-40, 60),
+              fromRotationDeg: -22,
+              fromScale: 0.75,
+              child: _StickerButton(
+                label: 'SKIP THIS ONE  →',
+                fill: TM.tomato,
+                textColor: TM.cream,
+                shadowColor: TM.ink,
+                rotation: -2 * math.pi / 180,
+                onTap: () =>
+                    Navigator.of(context).pop(FreezeChoice.skip),
+              ),
             ),
             const SizedBox(height: 16),
-            _StickerButton(
-              label: '↻  REDO THIS ONE',
-              fill: TM.cream,
-              textColor: TM.ink,
-              shadowColor: TM.lemon,
-              rotation: 2 * math.pi / 180,
-              onTap: () =>
-                  Navigator.of(context).pop(FreezeChoice.reset),
+            SuitcaseItem(
+              animation: animation,
+              delayFraction: 0.30,
+              spanFraction: 0.70,
+              fromOffset: const Offset(50, 80),
+              fromRotationDeg: 28,
+              fromScale: 0.72,
+              child: _StickerButton(
+                label: '↻  REDO THIS ONE',
+                fill: TM.cream,
+                textColor: TM.ink,
+                shadowColor: TM.lemon,
+                rotation: 2 * math.pi / 180,
+                onTap: () =>
+                    Navigator.of(context).pop(FreezeChoice.reset),
+              ),
             ),
           ],
         ),

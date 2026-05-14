@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../providers/task_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
+import '../widgets/suitcase_entrance.dart';
 
 /// Daily Task List screen.
 class TaskListScreen extends StatelessWidget {
@@ -766,7 +767,7 @@ Future<bool?> _showDeleteConfirm(BuildContext context, Task task) {
     barrierDismissible: true,
     barrierLabel: 'dismiss delete confirmation',
     barrierColor: TM.ink.withValues(alpha: 0.55),
-    transitionDuration: const Duration(milliseconds: 200),
+    transitionDuration: const Duration(milliseconds: 700),
     pageBuilder: (_, __, ___) => _DeleteConfirmBody(taskName: task.name),
     transitionBuilder: (_, anim, __, child) {
       final scale = Tween<double>(begin: 0.85, end: 1.0).animate(
@@ -786,6 +787,7 @@ class _DeleteConfirmBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final routeAnim = ModalRoute.of(context)!.animation!;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 36),
@@ -828,24 +830,40 @@ class _DeleteConfirmBody extends StatelessWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: _ConfirmButton(
-                        label: 'keep it',
-                        fill: TM.cream2,
-                        textColor: TM.ink,
-                        shadowColor: TM.ink,
-                        rotation: -2,
-                        onTap: () => Navigator.of(context).pop(false),
+                      child: SuitcaseItem(
+                        animation: routeAnim,
+                        delayFraction: 0.35,
+                        spanFraction: 0.55,
+                        fromOffset: const Offset(-30, 50),
+                        fromRotationDeg: -18,
+                        fromScale: 0.80,
+                        child: _ConfirmButton(
+                          label: 'keep it',
+                          fill: TM.cream2,
+                          textColor: TM.ink,
+                          shadowColor: TM.ink,
+                          rotation: -2,
+                          onTap: () => Navigator.of(context).pop(false),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: _ConfirmButton(
-                        label: 'TOSS IT',
-                        fill: TM.tomato,
-                        textColor: TM.cream,
-                        shadowColor: TM.lemon,
-                        rotation: 2,
-                        onTap: () => Navigator.of(context).pop(true),
+                      child: SuitcaseItem(
+                        animation: routeAnim,
+                        delayFraction: 0.50,
+                        spanFraction: 0.50,
+                        fromOffset: const Offset(40, 60),
+                        fromRotationDeg: 22,
+                        fromScale: 0.78,
+                        child: _ConfirmButton(
+                          label: 'TOSS IT',
+                          fill: TM.tomato,
+                          textColor: TM.cream,
+                          shadowColor: TM.lemon,
+                          rotation: 2,
+                          onTap: () => Navigator.of(context).pop(true),
+                        ),
                       ),
                     ),
                   ],
