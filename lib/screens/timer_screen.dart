@@ -48,33 +48,49 @@ class TimerScreen extends StatelessWidget {
         ),
         SafeArea(
           bottom: false,
-          child: Column(
-            children: [
-              const _TopBar(),
-              const SizedBox(height: 12),
-              _ActiveModuleLabel(task: moduleLabel),
-              const Spacer(),
-              _MascotWithOrbit(
-                bipState: timer.isCelebrating
-                    ? BipState.done
-                    : (timer.isFocusPhase && timer.isRunning)
-                        ? BipState.focus
-                        : BipState.idle,
-              ),
-              const Spacer(),
-              _TimerDisplay(
-                time: timer.formattedTime,
-                isRunning: timer.isRunning,
-              ),
-              const SizedBox(height: 20),
-              _FocusCyclePills(
-                filled: timer.completedPomodoros,
-                total: timer.pomodorosPerCycle,
-              ),
-              const SizedBox(height: 32),
-              const _ControlButton(),
-              const SizedBox(height: 16),
-            ],
+          // Fast upward flick anywhere on the timer surface pulls up the
+          // task list, mirroring the swipe-down-to-dismiss gesture that
+          // closes that same bottom sheet. `translucent` keeps the hit
+          // available to child taps and long-presses (control button,
+          // hamburger, sticky-note icon, timer-digits freeze) — the
+          // vertical-drag recogniser only claims the gesture once the
+          // pointer has moved meaningfully along the y-axis.
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onVerticalDragEnd: (details) {
+              final v = details.primaryVelocity ?? 0;
+              // -700 px/s is roughly the same flick threshold Flutter's
+              // bottom sheet uses to dismiss. Symmetric on the way in.
+              if (v < -700) TaskListScreen.show(context);
+            },
+            child: Column(
+              children: [
+                const _TopBar(),
+                const SizedBox(height: 12),
+                _ActiveModuleLabel(task: moduleLabel),
+                const Spacer(),
+                _MascotWithOrbit(
+                  bipState: timer.isCelebrating
+                      ? BipState.done
+                      : (timer.isFocusPhase && timer.isRunning)
+                          ? BipState.focus
+                          : BipState.idle,
+                ),
+                const Spacer(),
+                _TimerDisplay(
+                  time: timer.formattedTime,
+                  isRunning: timer.isRunning,
+                ),
+                const SizedBox(height: 20),
+                _FocusCyclePills(
+                  filled: timer.completedPomodoros,
+                  total: timer.pomodorosPerCycle,
+                ),
+                const SizedBox(height: 32),
+                const _ControlButton(),
+                const SizedBox(height: 16),
+              ],
+            ),
           ),
         ),
       ],
