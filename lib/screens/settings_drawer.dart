@@ -510,85 +510,247 @@ class _DurationIconPainter extends CustomPainter {
 
 // Cycle map
 
-class _CycleMap extends StatelessWidget {
+class _CycleMap extends StatefulWidget {
   const _CycleMap();
+
+  @override
+  State<_CycleMap> createState() => _CycleMapState();
+}
+
+class _CycleMapState extends State<_CycleMap> {
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
     final timer = context.watch<TimerProvider>();
-    // TimerPhase.values is in cycle order, so .index aligns with the
-    // segment list 1:1 (pomodoro1=0 .. longBreak=5).
-    final currentIdx = timer.phase.index;
+    final reduced = MediaQuery.of(context).disableAnimations;
+    final currentIdx = timer.phaseIndex;
     // When the timer is idle (fresh start OR waiting between phases) we
     // don't highlight an active segment — the user hasn't engaged yet.
     final showActive = timer.status != TimerStatus.idle;
 
-    final segments = <_CycleSeg>[
-      _CycleSeg('P1', TM.tomato,
-          done: 0 < currentIdx, active: showActive && currentIdx == 0),
-      _CycleSeg('b', TM.mint,
-          done: 1 < currentIdx,
-          active: showActive && currentIdx == 1,
-          thin: true),
-      _CycleSeg('P2', TM.tomato,
-          done: 2 < currentIdx, active: showActive && currentIdx == 2),
-      _CycleSeg('b', TM.mint,
-          done: 3 < currentIdx,
-          active: showActive && currentIdx == 3,
-          thin: true),
-      _CycleSeg('P3', TM.tomato,
-          done: 4 < currentIdx, active: showActive && currentIdx == 4),
-      _CycleSeg('B', TM.cobalt,
-          done: 5 < currentIdx,
-          active: showActive && currentIdx == 5,
-          big: true),
-    ];
+    // Build the pill row directly from the provider's dynamic sequence
+    // so any reshape (pomodorosPerCycle / shortBreaksOn) shows up here
+    // immediately.
+    final segments = <_CycleSeg>[];
+    var pomoNum = 0;
+    for (var i = 0; i < timer.sequenceLength; i++) {
+      final phase = timer.phaseAt(i);
+      final done = i < currentIdx;
+      final active = showActive && i == currentIdx;
+      switch (phase) {
+        case TimerPhase.focus:
+          pomoNum++;
+          segments.add(_CycleSeg('P$pomoNum', TM.tomato,
+              done: done, active: active));
+          break;
+        case TimerPhase.shortBreak:
+          segments.add(_CycleSeg('b', TM.mint,
+              done: done, active: active, thin: true));
+          break;
+        case TimerPhase.longBreak:
+          segments.add(_CycleSeg('B', TM.cobalt,
+              done: done, active: active, big: true));
+          break;
+      }
+    }
+
+    final motion = reduced
+        ? Duration.zero
+        : const Duration(milliseconds: 200);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'CYCLE MAP',
-          style: TMText.display(
-            fontSize: 10,
-            letterSpacing: 2,
-            color: TM.tomato,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: TM.ink2,
-            border: Border.all(color: TM.dim2, width: 2),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (int i = 0; i < segments.length; i++) ...[
-                Expanded(
-                  flex: segments[i].big
-                      ? 14
-                      : segments[i].thin
-                          ? 7
-                          : 10,
-                  child: _CyclePill(segment: segments[i]),
-                ),
-                if (i < segments.length - 1)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    'CYCLE MAP',
+                    style: TMText.display(
+                      fontSize: 10,
+                      letterSpacing: 2,
+                      color: TM.tomato,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _expanded ? 'tap to close' : 'tap to edit',
+                    style: TMText.marker(
+                      fontSize: 12,
+                      color: TM.cream.withValues(alpha: 0.55),
+                    ),
+                  ),
+                  const Spacer(),
+                  AnimatedRotation(
+                    turns: _expanded ? 0.25 : 0,
+                    duration: motion,
+                    curve: Curves.easeOutCubic,
                     child: Text(
                       '›',
-                      style: TMText.ui(
-                        fontSize: 10,
-                        color: TM.dim2,
+                      style: TMText.display(
+                        fontSize: 16,
+                        color: TM.cream.withValues(alpha: 0.55),
+                        height: 1.0,
                       ),
                     ),
                   ),
-              ],
+                ],
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: TM.ink2,
+                  border: Border.all(color: TM.dim2, width: 2),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    for (int i = 0; i < segments.length; i++) ...[
+                      Expanded(
+                        flex: segments[i].big
+                            ? 14
+                            : segments[i].thin
+                                ? 7
+                                : 10,
+                        child: _CyclePill(segment: segments[i]),
+                      ),
+                      if (i < segments.length - 1)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: Text(
+                            '›',
+                            style: TMText.ui(
+                              fontSize: 10,
+                              color: TM.dim2,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ],
+                ),
+              ),
             ],
           ),
         ),
+        AnimatedSize(
+          duration: motion,
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.topCenter,
+          child: _expanded
+              ? const _CycleMapEditor()
+              : const SizedBox.shrink(),
+        ),
       ],
+    );
+  }
+}
+
+/// Two-knob editor that appears under the cycle map when expanded:
+/// a stepper for "Pomodoros per cycle" (2..6) and a toggle for
+/// "Short breaks" (on/off). Reuses the same _StepButton / _ToggleCard
+/// idiom as the duration rows above, so it reads as part of the same
+/// family of controls.
+class _CycleMapEditor extends StatelessWidget {
+  const _CycleMapEditor();
+
+  @override
+  Widget build(BuildContext context) {
+    final timer = context.watch<TimerProvider>();
+    // Strict mode promises "no escape" — reshaping the cycle while a
+    // strict session is mid-flight would let the user dodge the long
+    // break. Mirror the PAUSE-locks-as-LOCKED idiom: dim + ignore taps.
+    final locked = timer.strictModeOn && timer.isRunning;
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: IgnorePointer(
+        ignoring: locked,
+        child: Opacity(
+          opacity: locked ? 0.4 : 1.0,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: TM.ink2,
+              border: Border.all(color: TM.dim2, width: 2),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Pomodoros per cycle',
+                        style: TMText.display(
+                          fontSize: 14,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '2..6 focus blocks before long break',
+                        style: TMText.ui(
+                          fontSize: 11,
+                          color: TM.cream.withValues(alpha: 0.65),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${timer.pomodorosPerCycle}',
+                  style: TMText.display(fontSize: 32, height: 1.0),
+                ),
+                const SizedBox(width: 10),
+                _StepButton(
+                  label: '−',
+                  shadowColor: TM.ink,
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    timer
+                        .setPomodorosPerCycle(timer.pomodorosPerCycle - 1);
+                  },
+                ),
+                const SizedBox(width: 8),
+                _StepButton(
+                  label: '+',
+                  shadowColor: TM.lemon,
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    timer
+                        .setPomodorosPerCycle(timer.pomodorosPerCycle + 1);
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          _ToggleCard(
+            title: 'Short breaks',
+            subtitle: 'tiny breathers between focus blocks',
+            on: timer.shortBreaksOn,
+            shadowColor: TM.mint,
+            onTap: () {
+              HapticFeedback.selectionClick();
+              timer.setShortBreaksOn(!timer.shortBreaksOn);
+            },
+          ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

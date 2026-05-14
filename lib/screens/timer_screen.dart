@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../providers/task_provider.dart';
 import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/bip_mascot.dart';
@@ -22,6 +23,14 @@ class TimerScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final timer = context.watch<TimerProvider>();
+    final activeTask = context.watch<TaskProvider>().activeTask;
+    // While a focus phase runs we show the active task's name in the
+    // "Now Tree-mah-doing" label — falls back to the phase label
+    // ("Focus" / "Short Break" / "Long Break") whenever there's no
+    // active task or we're on a break.
+    final moduleLabel = (timer.isFocusPhase && activeTask != null)
+        ? activeTask.name
+        : timer.phaseLabel;
 
     return Stack(
       fit: StackFit.expand,
@@ -43,7 +52,7 @@ class TimerScreen extends StatelessWidget {
             children: [
               const _TopBar(),
               const SizedBox(height: 12),
-              _ActiveModuleLabel(task: timer.phaseLabel),
+              _ActiveModuleLabel(task: moduleLabel),
               const Spacer(),
               _MascotWithOrbit(
                 bipState: timer.isCelebrating
@@ -60,7 +69,7 @@ class TimerScreen extends StatelessWidget {
               const SizedBox(height: 20),
               _FocusCyclePills(
                 filled: timer.completedPomodoros,
-                total: 3,
+                total: timer.pomodorosPerCycle,
               ),
               const SizedBox(height: 32),
               const _ControlButton(),
@@ -222,6 +231,8 @@ class _ActiveModuleLabel extends StatelessWidget {
           Text(
             task,
             style: TMText.marker(fontSize: 28, color: TM.cream, height: 1.0),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           const MarkerUnderline(width: 170),
         ],

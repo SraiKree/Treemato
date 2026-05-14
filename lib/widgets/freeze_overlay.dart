@@ -1,6 +1,6 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
 // Local frost palette — deliberately not in TM, since this is a one-off
 // material used for the freeze gesture. Pale, cool, never saturated.
@@ -188,10 +188,12 @@ class _Streak {
   });
 }
 
-/// Pale-frost rounded-rect stroke that draws itself clockwise as progress
-/// goes 0 → 1. Painted with a sweep gradient whose start angle is shifted by
-/// [shimmerPhase] (looping 0 → 1) so a bright "highlight" rotates around the
-/// box like light catching the edge of an ice cube.
+/// 2.5D candy-bar border: alternating cobalt and ice-white stripes scroll
+/// around the rounded-rect path like a barber pole (driven by [shimmerPhase]).
+/// A wider dark stroke underneath fakes a drop shadow, a thin bright stroke
+/// on top fakes a specular highlight running down the centre of the bar, and
+/// a soft blurred hotspot travels along the path for the glossy "shine"
+/// catching light. Progress 0 → 1 reveals the bar clockwise from the start.
 class _FrostBorderPainter extends CustomPainter {
   final double progress;
   final double radius;
@@ -202,6 +204,11 @@ class _FrostBorderPainter extends CustomPainter {
     required this.radius,
     required this.shimmerPhase,
   });
+
+  // Width of one stripe in pixels along the path. Total cycle = 2 * stripe.
+  static const double _stripeLen = 12.0;
+  // Length of the travelling shine hotspot.
+  static const double _shineLen = 26.0;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -215,42 +222,117 @@ class _FrostBorderPainter extends CustomPainter {
     final path = Path()
       ..addRRect(RRect.fromRectAndRadius(rect, Radius.circular(radius)));
 
-    final shimmerAngle = shimmerPhase * 2 * math.pi;
-    final center = Offset(size.width / 2, size.height / 2);
+    // Bar thickens as the freeze locks in.
+    final barWidth = 3.0 + 3.0 * progress;
 
-    // Sweep gradient: cycles light → highlight → mid → highlight → light, so
-    // there are two bright spots ~180° apart. Shifting startAngle by
-    // shimmerAngle rotates the whole sweep around the center over time.
-    final shader = ui.Gradient.sweep(
-      center,
-      const [_iceLight, _iceWhite, _iceMid, _iceWhite, _iceLight],
-      const [0.0, 0.25, 0.5, 0.75, 1.0],
-      TileMode.clamp,
-      shimmerAngle,
-      shimmerAngle + 2 * math.pi,
-    );
-
-    final mainPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0 + 2.0 * progress
-      ..strokeCap = StrokeCap.round
-      ..shader = shader;
-
-    // Soft frost-white ghost behind the stroke — keeps the riso
-    // misregistration vibe without competing with the gradient.
+    // Layer 1 — riso ghost (offset frost-white) behind everything.
     final ghostPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.4
       ..strokeCap = StrokeCap.round
       ..color = _iceWhite.withValues(alpha: 0.3 * progress);
 
+    // Layer 2 — dark "underside" shadow: a slightly wider, near-black stroke
+    // sitting beneath the candy. Sells depth — the bar feels lifted off the
+    // frost. Inky cobalt so it ties into the freeze palette.
+    final shadowPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = barWidth + 1.6
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF0A1A3A).withValues(alpha: 0.55 * progress);
+
+    // Layer 3 — alternating candy stripes (cobalt / ice-white), drawn as
+    // discrete path segments. Butt caps so adjacent stripes meet cleanly.
+    final cobaltPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = barWidth
+      ..strokeCap = StrokeCap.butt
+      ..color = TM.cobalt;
+    final whitePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = barWidth
+      ..strokeCap = StrokeCap.butt
+      ..color = _iceWhite;
+
+    // Layer 4 — thin specular highlight down the middle of the bar. Same
+    // path, ~30 % of bar width, soft white. Reads as a glossy ridge running
+    // the length of a cylindrical candy.
+    final specularPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = math.max(1.0, barWidth * 0.30)
+      ..strokeCap = StrokeCap.round
+      ..color = Colors.white.withValues(alpha: 0.55 * progress);
+
+    // Layer 5 — travelling shine hotspot: a short, blurred bright segment
+    // that scoots around the path with shimmerPhase. This is the "shine"
+    // the sweep gradient used to provide.
+    final shinePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = barWidth * 0.9
+      ..strokeCap = StrokeCap.round
+      ..color = Colors.white.withValues(alpha: 0.85 * progress)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.5);
+
     for (final metric in path.computeMetrics()) {
-      final drawn = metric.extractPath(0, metric.length * progress);
+      final pathLen = metric.length;
+      final drawnLen = pathLen * progress;
+      if (drawnLen <= 0) continue;
+
+      // Ghost (offset).
+      final drawn = metric.extractPath(0, drawnLen);
       canvas.save();
       canvas.translate(2, -1);
       canvas.drawPath(drawn, ghostPaint);
       canvas.restore();
-      canvas.drawPath(drawn, mainPaint);
+
+      // Shadow under the bar.
+      canvas.drawPath(drawn, shadowPaint);
+
+      // Candy stripes — phase-shifted by shimmerPhase so the bands appear
+      // to scroll around the bar like a barber pole.
+      const cycle = _stripeLen * 2;
+      final shift = (shimmerPhase * cycle) % cycle;
+      double pos = -shift;
+      bool isCobalt = false;
+      while (pos < drawnLen) {
+        final segStart = math.max(pos, 0.0);
+        final segEnd = math.min(pos + _stripeLen, drawnLen);
+        if (segEnd > segStart) {
+          canvas.drawPath(
+            metric.extractPath(segStart, segEnd),
+            isCobalt ? cobaltPaint : whitePaint,
+          );
+        }
+        pos += _stripeLen;
+        isCobalt = !isCobalt;
+      }
+
+      // Specular ridge along the drawn bar.
+      canvas.drawPath(drawn, specularPaint);
+
+      // Travelling shine hotspot. While progress < 1 the path is open, so
+      // we just clip to the drawn region. At full progress we wrap the
+      // segment around the closed path so the shine never "pops" off.
+      final shineCenter = (shimmerPhase * pathLen) % pathLen;
+      double shineStart = shineCenter - _shineLen / 2;
+      double shineEnd = shineCenter + _shineLen / 2;
+      if (progress >= 1.0) {
+        if (shineStart < 0) {
+          canvas.drawPath(
+              metric.extractPath(pathLen + shineStart, pathLen), shinePaint);
+          shineStart = 0;
+        }
+        if (shineEnd > pathLen) {
+          canvas.drawPath(
+              metric.extractPath(0, shineEnd - pathLen), shinePaint);
+          shineEnd = pathLen;
+        }
+        canvas.drawPath(metric.extractPath(shineStart, shineEnd), shinePaint);
+      } else {
+        final s = math.max(shineStart, 0.0);
+        final e = math.min(shineEnd, drawnLen);
+        if (e > s) canvas.drawPath(metric.extractPath(s, e), shinePaint);
+      }
     }
   }
 
