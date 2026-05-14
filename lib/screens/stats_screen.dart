@@ -1,5 +1,9 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../models/session_record.dart';
+import '../providers/session_provider.dart';
+import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
 
@@ -22,6 +26,10 @@ class _StatsScreenState extends State<StatsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final sessions = context.watch<SessionProvider>().records;
+    final target = context.watch<TimerProvider>().dailyTargetPomodoros;
+    final derived = _StatsData.from(sessions, DateTime.now());
+
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -37,23 +45,29 @@ class _StatsScreenState extends State<StatsScreen> {
                   padding: const EdgeInsets.only(bottom: 20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: const [
+                    children: [
                       Padding(
-                        padding: EdgeInsets.fromLTRB(20, 12, 20, 0),
-                        child: _TargetCard(count: 8),
+                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                        child: _TargetCard(
+                          count: derived.todayCount,
+                          target: target,
+                        ),
                       ),
-                      SizedBox(height: 14),
+                      const SizedBox(height: 14),
                       Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 20),
-                        child: _WeekChart(),
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: _WeekChart(values: derived.weekValues),
                       ),
-                      SizedBox(height: 14),
+                      const SizedBox(height: 14),
                       Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 20),
-                        child: _MonthlyHarvest(),
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: _MonthlyHarvest(
+                          values: derived.monthValues,
+                          target: target,
+                        ),
                       ),
-                      SizedBox(height: 14),
-                      Padding(
+                      const SizedBox(height: 14),
+                      const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 20),
                         child: _QuoteCard(),
                       ),
@@ -65,6 +79,63 @@ class _StatsScreenState extends State<StatsScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// Derived data
+
+/// All stats numbers the screen needs, computed in a single O(n) pass over
+/// the persisted session records. Kept as a plain value type so the build
+/// method stays declarative.
+class _StatsData {
+  /// Pomos finished today (excludes skipped phases per product rule).
+  final int todayCount;
+
+  /// Mon..Sun of the current calendar week, in that order. Future days
+  /// of the current week sit at 0 until they happen.
+  final List<int> weekValues;
+
+  /// Rolling last 30 days, oldest first → newest last (today). Length 30.
+  /// Reads naturally in a left-to-right, top-to-bottom GridView.
+  final List<int> monthValues;
+
+  const _StatsData({
+    required this.todayCount,
+    required this.weekValues,
+    required this.monthValues,
+  });
+
+  static _StatsData from(List<SessionRecord> sessions, DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+
+    // Single pass: bucket finished pomos by calendar day. Skipped phases
+    // never count toward stats — they exist only to render in History.
+    final perDay = <DateTime, int>{};
+    for (final s in sessions) {
+      if (!s.isPomodoro || s.skipped) continue;
+      final k = DateTime(s.startTime.year, s.startTime.month, s.startTime.day);
+      perDay[k] = (perDay[k] ?? 0) + 1;
+    }
+
+    // DateTime.weekday: 1 (Mon) .. 7 (Sun). Anchor the row on Monday.
+    final monday = today.subtract(Duration(days: today.weekday - 1));
+    final week = List<int>.generate(7, (i) {
+      final d = monday.add(Duration(days: i));
+      return perDay[d] ?? 0;
+    });
+
+    // 29 days ago → today, so cell 29 (bottom-right of a 10-wide grid) is
+    // today. Lets the eye scan oldest → newest naturally.
+    final month = List<int>.generate(30, (i) {
+      final d = today.subtract(Duration(days: 29 - i));
+      return perDay[d] ?? 0;
+    });
+
+    return _StatsData(
+      todayCount: perDay[today] ?? 0,
+      weekValues: week,
+      monthValues: month,
     );
   }
 }
@@ -96,10 +167,15 @@ class _Header extends StatelessWidget {
 
 class _TargetCard extends StatelessWidget {
   final int count;
-  const _TargetCard({required this.count});
+  final int target;
+  const _TargetCard({required this.count, required this.target});
 
   @override
   Widget build(BuildContext context) {
+    final hit = count >= target;
+    // Chip flips celebratory vs nudging — same slot, different message, so
+    // the card's layout stays stable as the day progresses.
+    final chipText = hit ? 'TARGET HIT!' : '${target - count} TO GO';
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -128,7 +204,7 @@ class _TargetCard extends StatelessWidget {
                           border: Border.all(color: TM.ink, width: 2),
                         ),
                         child: Text(
-                          'TARGET HIT!',
+                          chipText,
                           style: TMText.display(
                             fontSize: 11,
                             letterSpacing: 1,
@@ -208,14 +284,16 @@ class _BigTargetNumber extends StatelessWidget {
 // Week chart
 
 class _WeekChart extends StatelessWidget {
-  const _WeekChart();
+  final List<int> values;
+  const _WeekChart({required this.values});
 
-  static const _week = [3, 5, 2, 6, 4, 0, 8];
   static const _days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
   @override
   Widget build(BuildContext context) {
-    final maxValue = _week.reduce(math.max);
+    // All-zero weeks: max is 0 and every bar falls into the "value == 0"
+    // branch in _WeekBar, rendering as dim stubs — no division blowups.
+    final maxValue = values.reduce(math.max);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -238,11 +316,11 @@ class _WeekChart extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              for (int i = 0; i < _week.length; i++) ...[
+              for (int i = 0; i < values.length; i++) ...[
                 if (i > 0) const SizedBox(width: 8),
                 Expanded(
                   child: _WeekBar(
-                    value: _week[i],
+                    value: values[i],
                     max: maxValue,
                     day: _days[i],
                   ),
@@ -307,12 +385,20 @@ class _WeekBar extends StatelessWidget {
 // Monthly harvest
 
 class _MonthlyHarvest extends StatelessWidget {
-  const _MonthlyHarvest();
+  /// Pomo counts for the last 30 days, oldest first → today last.
+  final List<int> values;
+
+  /// Daily target — used to scale a raw pomo count onto the 0..5 heat
+  /// bucket so the gradient feels meaningful regardless of how ambitious
+  /// the user's target is.
+  final int target;
+
+  const _MonthlyHarvest({required this.values, required this.target});
 
   static const _cells = 30;
 
-  static Color _heatColor(int v) {
-    switch (v) {
+  static Color _heatColor(int bucket) {
+    switch (bucket) {
       case 0:
         return TM.dim;
       case 1:
@@ -328,7 +414,18 @@ class _MonthlyHarvest extends StatelessWidget {
     }
   }
 
-  int _heat(int i) => (((i * 7 + 3) % 11) / 2).floor();
+  /// Map a day's raw pomo count to a 0..5 heat bucket. 0 stays sleepy,
+  /// hitting target lights up lemon (bucket 5). Anything in between
+  /// scales proportionally so even a 1-pomo day shows some warmth.
+  int _bucket(int count) {
+    if (count <= 0) return 0;
+    if (count >= target) return 5;
+    final scaled = ((count * 5) / target).ceil();
+    return scaled.clamp(1, 5);
+  }
+
+  // Deterministic per-cell rotation in the [-3°, +2°] range. Keeps the
+  // wonky riso vibe stable across rebuilds (no Random in build).
   double _rotDeg(int i) => (((i * 7) % 6) - 3).toDouble();
 
   @override
@@ -371,7 +468,7 @@ class _MonthlyHarvest extends StatelessWidget {
                     angle: _rotDeg(i) * math.pi / 180,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: _heatColor(_heat(i)),
+                        color: _heatColor(_bucket(values[i])),
                         border: Border.all(color: TM.ink, width: 1.5),
                       ),
                     ),

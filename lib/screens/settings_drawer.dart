@@ -65,6 +65,8 @@ class SettingsDrawer extends StatelessWidget {
                   SizedBox(height: 14),
                   _SquiggleDivider(),
                   SizedBox(height: 14),
+                  _DailyGoal(),
+                  SizedBox(height: 14),
                   _WorkflowMode(),
                   SizedBox(height: 14),
                   _SoundToggle(),
@@ -832,6 +834,87 @@ class _SquiggleDivider extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(color: TM.dim2),
             child: SizedBox(height: 1),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// Daily goal
+
+class _DailyGoal extends StatelessWidget {
+  const _DailyGoal();
+
+  @override
+  Widget build(BuildContext context) {
+    final timer = context.watch<TimerProvider>();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'DAILY GOAL',
+          style: TMText.display(fontSize: 16, letterSpacing: 1),
+        ),
+        const MarkerUnderline(width: 90, color: TM.lemon),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          decoration: BoxDecoration(
+            color: TM.ink2,
+            border: Border.all(color: TM.dim2, width: 2),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pomodoros per day',
+                      style: TMText.display(
+                        fontSize: 14,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'target shown on the stats screen',
+                      style: TMText.ui(
+                        fontSize: 11,
+                        color: TM.cream.withValues(alpha: 0.65),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '${timer.dailyTargetPomodoros}',
+                style: TMText.display(fontSize: 32, height: 1.0),
+              ),
+              const SizedBox(width: 10),
+              _StepButton(
+                label: '−',
+                shadowColor: TM.ink,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  timer.setDailyTargetPomodoros(
+                      timer.dailyTargetPomodoros - 1);
+                },
+              ),
+              const SizedBox(width: 8),
+              _StepButton(
+                label: '+',
+                shadowColor: TM.lemon,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  timer.setDailyTargetPomodoros(
+                      timer.dailyTargetPomodoros + 1);
+                },
+              ),
+            ],
           ),
         ),
       ],
