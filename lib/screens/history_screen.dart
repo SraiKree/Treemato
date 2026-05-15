@@ -83,6 +83,10 @@ class _HistoryScreenState extends State<HistoryScreen>
 // ── List & grouping ──────────────────────────────────────────────────
 
 /// Renders the day-grouped, staggered-in list of pomodoro entries.
+///
+/// Uses a single-pass algorithm over the already-sorted input list to
+/// emit day dividers whenever the calendar day changes, avoiding the
+/// previous map-and-re-sort overhead.
 class _HistoryList extends StatelessWidget {
   final List<SessionRecord> sessions;
   final ScrollController scroll;
@@ -100,33 +104,43 @@ class _HistoryList extends StatelessWidget {
     final today = _dayKey(now);
     final yesterday = today.subtract(const Duration(days: 1));
 
-    // Group sessions by calendar day, preserving newest-first order
-    // since the input is already sorted that way.
-    final grouped = <DateTime, List<SessionRecord>>{};
-    for (final s in sessions) {
-      grouped.putIfAbsent(_dayKey(s.startTime), () => []).add(s);
-    }
-    final dayKeys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
-
-    // Flatten into a single child list (divider per day, then rows).
+    // Single-pass: walk the newest-first list, inserting a divider
+    // whenever the calendar day changes from the previous entry.
     final items = <Widget>[];
-    for (final day in dayKeys) {
-      final entries = grouped[day]!;
-      final label = day == today
-          ? 'today'
-          : day == yesterday
-              ? 'yesterday'
-              : _formatDayLabel(day);
-      items.add(_DayDivider(label: label, count: entries.length));
-      for (final e in entries) {
-        items.add(
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-            child: _HistoryRow(entry: e, sessionDay: day, today: today, yesterday: yesterday),
-          ),
-        );
+    DateTime? currentDay;
+    int dayCount = 0;
+    // We need to know the count for each day header up front, so we
+    // still do a lightweight grouping pass for counts only.
+    final dayCounts = <DateTime, int>{};
+    for (final s in sessions) {
+      dayCounts.update(_dayKey(s.startTime), (v) => v + 1, ifAbsent: () => 1);
+    }
+
+    for (final s in sessions) {
+      final day = _dayKey(s.startTime);
+      if (day != currentDay) {
+        // Spacing between day groups (skip before the very first group).
+        if (currentDay != null) items.add(const SizedBox(height: 10));
+        currentDay = day;
+        dayCount = dayCounts[day]!;
+        final label = day == today
+            ? 'today'
+            : day == yesterday
+                ? 'yesterday'
+                : _formatDayLabel(day);
+        items.add(_DayDivider(label: label, count: dayCount));
       }
-      items.add(const SizedBox(height: 10));
+      items.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+          child: _HistoryRow(
+            entry: s,
+            sessionDay: day,
+            today: today,
+            yesterday: yesterday,
+          ),
+        ),
+      );
     }
 
     return SingleChildScrollView(
@@ -158,7 +172,6 @@ const _months = [
 
 /// Formats a non-today/non-yesterday day key as e.g. `mon, may 13`.
 String _formatDayLabel(DateTime day) {
-  // DateTime.weekday returns 1 (Mon) .. 7 (Sun).
   final dow = _weekdays[day.weekday - 1];
   final mon = _months[day.month - 1];
   return '$dow, $mon ${day.day}';
@@ -173,9 +186,7 @@ String _formatTime(DateTime t) {
   return '$hour12:$mins $ampm';
 }
 
-/// Formats a duration in minutes as the duration pill text. Pomodoros
-/// today are typically 25m; long sessions clamp to `Hh Mm` so the pill
-/// stays compact even for a 90-minute focus block.
+/// Formats a duration in minutes as the duration pill text.
 String _formatDuration(int minutes) {
   if (minutes < 60) return '${minutes}m';
   final h = minutes ~/ 60;
@@ -234,7 +245,10 @@ class _EmptyState extends StatelessWidget {
 // ── Stagger ──────────────────────────────────────────────────────────
 
 /// Wraps a child in a fade + slide-up driven by a slice of [controller]'s
-/// progress. Slice = `[index/total .. index/total + window]`, clamped to 1.
+/// progress.
+///
+/// The delay is capped so that items beyond the initial viewport still
+/// animate cleanly instead of collapsing into a simultaneous flash.
 class _StaggeredEntry extends StatelessWidget {
   final AnimationController controller;
   final int index;
@@ -247,13 +261,19 @@ class _StaggeredEntry extends StatelessWidget {
     required this.child,
   });
 
-  static const _window = 0.4; // each item takes 40% of total to play
+  /// Max items that participate in the stagger cascade. Items beyond
+  /// this threshold appear instantly when the animation completes.
+  static const _maxStaggerItems = 12;
+  static const _window = 0.4;
   static const _slidePx = 16.0;
 
   @override
   Widget build(BuildContext context) {
-    // Last item starts at (1 - window) so everything finishes by 1.0.
-    final start = (index / total) * (1 - _window);
+    // Items beyond the stagger cap skip the animation entirely.
+    if (index >= _maxStaggerItems) return child;
+
+    final effectiveTotal = total.clamp(1, _maxStaggerItems);
+    final start = (index / effectiveTotal) * (1 - _window);
     final end = start + _window;
     return AnimatedBuilder(
       animation: controller,
@@ -352,39 +372,51 @@ class _HistoryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Always tomato-coloured — breaks aren't persisted, so every row is
-    // a pomodoro. (Keeping the design's left-border accent intact.)
     const borderColor = TM.tomato;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: TM.ink2,
-        border: const Border(
-          top: BorderSide(color: TM.dim2, width: 2),
-          right: BorderSide(color: TM.dim2, width: 2),
-          bottom: BorderSide(color: TM.dim2, width: 2),
-          left: BorderSide(color: borderColor, width: 4),
-        ),
-      ),
-      child: Row(
-        children: [
-          const _EntryIcon(),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _EntryContent(
-              entry: entry,
-              sessionDay: sessionDay,
-              today: today,
-              yesterday: yesterday,
-            ),
+
+    // Build the semantic label for the entire row.
+    final taskLabel = (entry.taskName != null && entry.taskName!.isNotEmpty)
+        ? entry.taskName!
+        : 'no task selected';
+    final semanticLabel = entry.skipped
+        ? '$taskLabel, skipped'
+        : '$taskLabel, ${_formatDuration(entry.durationMinutes)}, '
+            '${_formatTime(entry.startTime)} to ${_formatTime(entry.endTime)}';
+
+    return Semantics(
+      container: true,
+      label: semanticLabel,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: TM.ink2,
+          border: const Border(
+            top: BorderSide(color: TM.dim2, width: 2),
+            right: BorderSide(color: TM.dim2, width: 2),
+            bottom: BorderSide(color: TM.dim2, width: 2),
+            left: BorderSide(color: borderColor, width: 4),
           ),
-          // Skipped rows omit the duration pill — they carry no real
-          // time data, so a pill would be misleading.
-          if (!entry.skipped) ...[
-            const SizedBox(width: 8),
-            _DurationPill(duration: _formatDuration(entry.durationMinutes)),
+        ),
+        child: Row(
+          children: [
+            const _EntryIcon(),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _EntryContent(
+                entry: entry,
+                sessionDay: sessionDay,
+                today: today,
+                yesterday: yesterday,
+              ),
+            ),
+            // Skipped rows omit the duration pill — they carry no real
+            // time data, so a pill would be misleading.
+            if (!entry.skipped) ...[
+              const SizedBox(width: 8),
+              _DurationPill(duration: _formatDuration(entry.durationMinutes)),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -461,16 +493,10 @@ class _EntryContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final hasTask = entry.taskName != null && entry.taskName!.isNotEmpty;
 
-    // Skipped rows carry no real time data — drop the timestamp line
-    // and label the row "(skipped)" instead. The task name (or "no
-    // task selected" fallback) stays so the user can still see what
-    // was bailed on.
     final String subtitle;
     if (entry.skipped) {
       subtitle = '(skipped)';
     } else {
-      // Day prefix matches the dividers above — capitalised because it
-      // sits inside a full sentence-style label.
       final dayPrefix = sessionDay == today
           ? 'Today'
           : sessionDay == yesterday
@@ -480,30 +506,32 @@ class _EntryContent extends StatelessWidget {
           '$dayPrefix, ${_formatTime(entry.startTime)} – ${_formatTime(entry.endTime)}';
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          hasTask ? entry.taskName! : '(no task selected)',
-          style: TMText.marker(
-            fontSize: 22,
-            color: hasTask ? TM.cream : const Color(0xFF6A665F),
-            height: 1.0,
-          ).copyWith(
-            fontStyle: hasTask ? FontStyle.normal : FontStyle.italic,
+    return ExcludeSemantics(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            hasTask ? entry.taskName! : '(no task selected)',
+            style: TMText.marker(
+              fontSize: 22,
+              color: hasTask ? TM.cream : TM.dim,
+              height: 1.0,
+            ).copyWith(
+              fontStyle: hasTask ? FontStyle.normal : FontStyle.italic,
+            ),
           ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          subtitle,
-          style: TMText.ui(
-            fontSize: 11,
-            letterSpacing: 0.3,
-            color: TM.cream.withValues(alpha: 0.55),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: TMText.ui(
+              fontSize: 11,
+              letterSpacing: 0.3,
+              color: TM.cream.withValues(alpha: 0.55),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

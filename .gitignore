@@ -47,6 +47,8 @@ app.*.map.json
 # AI/Agent Related
 AGENTS.md
 CLAUDE.md
+DESIGN.md
+PRODUCT.md
 next_steps.md
 development_decisions.md
 /design_ref/

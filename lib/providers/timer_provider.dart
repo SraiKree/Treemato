@@ -13,6 +13,7 @@ const _kShortBreaksOn = 'shortBreaksOn';
 const _kStrictMode = 'strictMode';
 const _kChimeSounds = 'chimeSounds';
 const _kDailyTargetPomodoros = 'dailyTargetPomodoros';
+const _kHasSeenFreezeHintPulse = 'hasSeenFreezeHintPulse';
 
 /// Kind of a single phase in the cycle. The sequence the provider walks
 /// through is a list of these — the same kind may appear multiple times
@@ -67,6 +68,8 @@ class TimerProvider extends ChangeNotifier {
     _strictMode = (_box.get(_kStrictMode) as bool?) ?? true;
     _chimeSounds = (_box.get(_kChimeSounds) as bool?) ?? false;
     _dailyTargetPomodoros = (_box.get(_kDailyTargetPomodoros) as int?) ?? 8;
+    _hasSeenFreezeHintPulse =
+        (_box.get(_kHasSeenFreezeHintPulse) as bool?) ?? false;
     // Rebuild sequence + remaining seconds from the restored config so
     // the very first frame already reflects the persisted state.
     _sequence = _buildSequence();
@@ -90,9 +93,11 @@ class TimerProvider extends ChangeNotifier {
   bool _strictMode = true;
   bool _chimeSounds = false;
 
-  // Daily pomodoro goal shown on the Stats screen target card. Default 8 —
-  // enough to feel ambitious for a typical day, low enough to feel reachable.
+
   int _dailyTargetPomodoros = 8;
+
+  // One-time first-run flag: the freeze-hint pulses on the user's first
+  bool _hasSeenFreezeHintPulse = false;
 
   // ── State ────────────────────────────────────────────────────────────
   List<TimerPhase> _sequence = const [TimerPhase.focus];
@@ -139,6 +144,7 @@ class TimerProvider extends ChangeNotifier {
   bool get strictModeOn => _strictMode;
   bool get chimeSoundsOn => _chimeSounds;
   int get dailyTargetPomodoros => _dailyTargetPomodoros;
+  bool get hasSeenFreezeHintPulse => _hasSeenFreezeHintPulse;
 
   /// How far through the current phase we are, 0.0 → 1.0.
   double get progress {
@@ -349,6 +355,14 @@ class TimerProvider extends ChangeNotifier {
   void toggleChimeSounds() {
     _chimeSounds = !_chimeSounds;
     _box.put(_kChimeSounds, _chimeSounds);
+    notifyListeners();
+  }
+
+  /// Mark the one-time freeze-hint pulse as shown.
+  void markFreezeHintPulseSeen() {
+    if (_hasSeenFreezeHintPulse) return;
+    _hasSeenFreezeHintPulse = true;
+    _box.put(_kHasSeenFreezeHintPulse, true);
     notifyListeners();
   }
 

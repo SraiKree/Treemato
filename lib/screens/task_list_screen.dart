@@ -75,20 +75,9 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          _BackChip(onTap: () => Navigator.of(context).pop()),
-          Text(
-            'TODAY · TUE',
-            style: TMText.display(
-              fontSize: 11,
-              letterSpacing: 2,
-              color: TM.cream.withValues(alpha: 0.55),
-            ),
-          ),
-          const SizedBox(width: 36),
-        ],
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: _BackChip(onTap: () => Navigator.of(context).pop()),
       ),
     );
   }
@@ -100,26 +89,30 @@ class _BackChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Transform.rotate(
-        angle: -4 * math.pi / 180,
-        child: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: TM.lemon,
-            border: Border.all(color: TM.ink, width: 2),
-            boxShadow: const [
-              BoxShadow(color: TM.tomato, offset: Offset(2, 2)),
-            ],
-          ),
-          alignment: Alignment.center,
-          child: const SizedBox(
-            width: 22,
-            height: 22,
-            child: CustomPaint(painter: _BackChevronPainter()),
+    return Semantics(
+      label: 'Close task list',
+      button: true,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Transform.rotate(
+          angle: -4 * math.pi / 180,
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: TM.lemon,
+              border: Border.all(color: TM.ink, width: 2),
+              boxShadow: const [
+                BoxShadow(color: TM.tomato, offset: Offset(2, 2)),
+              ],
+            ),
+            alignment: Alignment.center,
+            child: const SizedBox(
+              width: 22,
+              height: 22,
+              child: CustomPaint(painter: _BackChevronPainter()),
+            ),
           ),
         ),
       ),
@@ -201,6 +194,17 @@ class _TornPaper extends StatelessWidget {
                       ),
                     const SizedBox(height: 8),
                     const _AddTaskRow(),
+                    if (tasks.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        'hint: press & hold a task to edit or toss it',
+                        style: TMText.display(
+                          fontSize: 11,
+                          letterSpacing: 1,
+                          color: TM.ink.withValues(alpha: 0.4),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -243,19 +247,32 @@ class _TornEdgeClipper extends CustomClipper<Path> {
   Path getClip(Size s) {
     final w = s.width;
     final h = s.height;
-    // % coordinates from design_ref polygon clipPath CSS.
-    const pts = <List<double>>[
-      [0.00, 0.06], [0.06, 0.02], [0.14, 0.05], [0.22, 0.01],
-      [0.32, 0.04], [0.44, 0.00], [0.56, 0.04], [0.68, 0.01],
-      [0.80, 0.05], [0.92, 0.02], [1.00, 0.06], [0.98, 0.94],
-      [0.90, 0.99], [0.78, 0.95], [0.66, 1.00], [0.54, 0.96],
-      [0.42, 1.00], [0.30, 0.95], [0.18, 0.99], [0.08, 0.96],
-      [0.00, 0.94],
-    ];
-    final path = Path()..moveTo(pts[0][0] * w, pts[0][1] * h);
-    for (var i = 1; i < pts.length; i++) {
-      path.lineTo(pts[i][0] * w, pts[i][1] * h);
+    // Adaptive zigzag: more points on wider screens so tears stay
+    // visually dense instead of stretching into blobs.
+    final count = (w / 38).round().clamp(8, 40);
+    final rng = math.Random(42); // deterministic
+    final path = Path()..moveTo(0, h * 0.06);
+    // Top edge
+    for (var i = 1; i <= count; i++) {
+      final x = w * i / (count + 1);
+      final y = h * (i.isOdd
+          ? 0.005 + rng.nextDouble() * 0.03
+          : 0.035 + rng.nextDouble() * 0.025);
+      path.lineTo(x, y);
     }
+    path.lineTo(w, h * 0.06);
+    // Right side
+    path.lineTo(w * 0.98, h * 0.94);
+    // Bottom edge (right to left)
+    final rng2 = math.Random(99);
+    for (var i = count; i >= 1; i--) {
+      final x = w * i / (count + 1);
+      final y = h * (i.isOdd
+          ? 0.96 + rng2.nextDouble() * 0.025
+          : 0.945 + rng2.nextDouble() * 0.04);
+      path.lineTo(x, y);
+    }
+    path.lineTo(0, h * 0.94);
     path.close();
     return path;
   }
@@ -308,73 +325,85 @@ class _TapeStrip extends StatelessWidget {
 
 // Task row
 
+enum _TaskAction { edit, delete }
+
 class _TaskRow extends StatelessWidget {
   final Task task;
   const _TaskRow({required this.task});
 
   @override
   Widget build(BuildContext context) {
-    final nameColor =
-        task.done ? TM.ink.withValues(alpha: 0.55) : TM.ink;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onLongPress: () async {
-        HapticFeedback.mediumImpact();
-        final confirmed = await _showDeleteConfirm(context, task);
-        if (confirmed == true && context.mounted) {
-          context.read<TaskProvider>().removeTask(task.id);
-        }
-      },
-      child: Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        _SelectionCircle(
-          active: task.active,
-          onTap: task.done
-              ? null
-              : () {
-                  HapticFeedback.selectionClick();
-                  context.read<TaskProvider>().setActive(task.id);
-                },
-        ),
-        Expanded(
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              RichText(
-                text: TextSpan(
-                  style: TMText.marker(
-                    fontSize: 24,
-                    color: nameColor,
-                    weight: FontWeight.w700,
-                  ).copyWith(
-                    decoration:
-                        task.done ? TextDecoration.lineThrough : null,
-                    decorationColor: task.done ? TM.tomato : null,
-                    decorationThickness: task.done ? 3 : null,
-                  ),
-                  children: [
-                    TextSpan(text: task.name),
-                    TextSpan(
-                      text: ' : ${task.remaining}',
-                      style: TextStyle(
-                        color: TM.ink.withValues(alpha: 0.6),
-                        fontSize: 20,
+    final nameColor = task.done ? TM.ink.withValues(alpha: 0.55) : TM.ink;
+    return Semantics(
+      label: '${task.name}, ${task.remaining} pomodoros'
+          '${task.active ? ', active' : ''}'
+          '${task.done ? ', completed' : ''}',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onLongPress: () async {
+          HapticFeedback.mediumImpact();
+          final action = await _showTaskAction(context, task);
+          if (!context.mounted) return;
+          switch (action) {
+            case _TaskAction.delete:
+              context.read<TaskProvider>().removeTask(task.id);
+            case _TaskAction.edit:
+              _showEditTask(context, task);
+            case null:
+              break;
+          }
+        },
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _SelectionCircle(
+              active: task.active,
+              onTap: task.done
+                  ? null
+                  : () {
+                      HapticFeedback.selectionClick();
+                      context.read<TaskProvider>().setActive(task.id);
+                    },
+            ),
+            Expanded(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  RichText(
+                    text: TextSpan(
+                      style: TMText.marker(
+                        fontSize: 24,
+                        color: nameColor,
+                        weight: FontWeight.w700,
+                      ).copyWith(
+                        decoration:
+                            task.done ? TextDecoration.lineThrough : null,
+                        decorationColor: task.done ? TM.tomato : null,
+                        decorationThickness: task.done ? 3 : null,
                       ),
+                      children: [
+                        TextSpan(text: task.name),
+                        TextSpan(
+                          text: ' : ${task.remaining}',
+                          style: TextStyle(
+                            color: TM.ink.withValues(alpha: 0.6),
+                            fontSize: 20,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                  if (task.active)
+                    const Positioned(
+                      right: -2,
+                      top: -6,
+                      child: Spark(size: 14, color: TM.tomato),
+                    ),
+                ],
               ),
-              if (task.active)
-                const Positioned(
-                  right: -2,
-                  top: -6,
-                  child: Spark(size: 14, color: TM.tomato),
-                ),
-            ],
-          ),
+            ),
+          ],
         ),
-      ],
       ),
     );
   }
@@ -383,8 +412,7 @@ class _TaskRow extends StatelessWidget {
 class _SelectionCircle extends StatelessWidget {
   final bool active;
 
-  /// When `null`, the circle is read-only (used for done rows). Otherwise
-  /// the whole 34×34 hit area dispatches taps to the callback.
+  /// When `null`, the circle is read-only (used for done rows).
   final VoidCallback? onTap;
   const _SelectionCircle({required this.active, this.onTap});
 
@@ -413,16 +441,21 @@ class _SelectionCircle extends StatelessWidget {
       ),
     );
 
-    // 6px padding around the 22×22 visual gives a 34×34 hit target —
-    // matches the row's previous left-margin footprint (22 + 12 spacer)
-    // so the layout doesn't shift, and clears Material's 48px tap-zone
-    // *enough* for a touch on the densest paper rows.
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(6),
-        child: visual,
+    return Semantics(
+      label: active ? 'Active task' : 'Set as active task',
+      button: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          splashFactory: NoSplash.splashFactory,
+          highlightColor: Colors.transparent,
+          customBorder: const CircleBorder(),
+          child: Padding(
+            padding: const EdgeInsets.all(13),
+            child: visual,
+          ),
+        ),
       ),
     );
   }
@@ -593,9 +626,10 @@ class _AddTaskRowState extends State<_AddTaskRow> {
               maxLines: 1,
               maxLength: 40,
               buildCounter: (_,
-                  {required currentLength,
-                  required isFocused,
-                  required maxLength}) => null,
+                      {required currentLength,
+                      required isFocused,
+                      required maxLength}) =>
+                  null,
               textCapitalization: TextCapitalization.sentences,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _commit(),
@@ -643,26 +677,30 @@ class _MiniStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {
-        HapticFeedback.selectionClick();
-        onTap();
-      },
-      child: Container(
-        width: 24,
-        height: 24,
-        decoration: BoxDecoration(
-          color: TM.cream2,
-          border: Border.all(color: TM.ink, width: 1.5),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: TMText.display(
-            fontSize: 14,
-            color: TM.ink,
-            height: 1.0,
+    return Semantics(
+      label: label == '+' ? 'Increase count' : 'Decrease count',
+      button: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        child: Container(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            color: TM.cream2,
+            border: Border.all(color: TM.ink, width: 1.5),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TMText.display(
+              fontSize: 14,
+              color: TM.ink,
+              height: 1.0,
+            ),
           ),
         ),
       ),
@@ -676,26 +714,30 @@ class _CommitCheck extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Transform.rotate(
-        angle: 3 * math.pi / 180,
-        child: Container(
-          width: 30,
-          height: 30,
-          decoration: BoxDecoration(
-            color: TM.tomato,
-            border: Border.all(color: TM.ink, width: 2),
-            boxShadow: const [
-              BoxShadow(color: TM.lemon, offset: Offset(1.5, 1.5)),
-            ],
-          ),
-          alignment: Alignment.center,
-          child: const SizedBox(
-            width: 18,
-            height: 18,
-            child: CustomPaint(painter: _CommitCheckPainter()),
+    return Semantics(
+      label: 'Add task',
+      button: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Transform.rotate(
+          angle: 3 * math.pi / 180,
+          child: Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: TM.tomato,
+              border: Border.all(color: TM.ink, width: 2),
+              boxShadow: const [
+                BoxShadow(color: TM.lemon, offset: Offset(1.5, 1.5)),
+              ],
+            ),
+            alignment: Alignment.center,
+            child: const SizedBox(
+              width: 18,
+              height: 18,
+              child: CustomPaint(painter: _CommitCheckPainter()),
+            ),
           ),
         ),
       ),
@@ -756,38 +798,54 @@ class _PostItMemo extends StatelessWidget {
   }
 }
 
-// Delete confirmation modal
+// Task action modal
 
-/// Pops a small "throw this out?" modal styled like a paper sticker.
-/// Resolves to `true` if the user confirmed deletion, `false` if they
-/// cancelled, or `null` if they tapped outside to dismiss.
-Future<bool?> _showDeleteConfirm(BuildContext context, Task task) {
-  return showGeneralDialog<bool>(
-    context: context,
-    barrierDismissible: true,
-    barrierLabel: 'dismiss delete confirmation',
-    barrierColor: TM.ink.withValues(alpha: 0.55),
-    transitionDuration: const Duration(milliseconds: 700),
-    pageBuilder: (_, __, ___) => _DeleteConfirmBody(taskName: task.name),
-    transitionBuilder: (_, anim, __, child) {
-      final scale = Tween<double>(begin: 0.85, end: 1.0).animate(
-        CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
-      );
-      return FadeTransition(
-        opacity: anim,
-        child: ScaleTransition(scale: scale, child: child),
-      );
-    },
+/// Shared transition builder for paper-sticker modals.
+Widget _stickerTransition(
+    BuildContext _, Animation<double> anim, Animation<double> __, Widget child) {
+  final scale = Tween<double>(begin: 0.85, end: 1.0).animate(
+    CurvedAnimation(parent: anim, curve: Curves.easeOutBack),
+  );
+  return FadeTransition(
+    opacity: anim,
+    child: ScaleTransition(scale: scale, child: child),
   );
 }
 
-class _DeleteConfirmBody extends StatelessWidget {
+/// Pops a small "edit or toss?" modal styled like a paper sticker.
+Future<_TaskAction?> _showTaskAction(BuildContext context, Task task) {
+  return showGeneralDialog<_TaskAction>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'dismiss task action',
+    barrierColor: TM.ink.withValues(alpha: 0.55),
+    transitionDuration: const Duration(milliseconds: 700),
+    pageBuilder: (_, __, ___) => _TaskActionBody(taskName: task.name),
+    transitionBuilder: _stickerTransition,
+  );
+}
+
+/// Shows a paper-styled edit dialog pre-filled with the task's values.
+Future<void> _showEditTask(BuildContext context, Task task) {
+  return showGeneralDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'dismiss edit task',
+    barrierColor: TM.ink.withValues(alpha: 0.55),
+    transitionDuration: const Duration(milliseconds: 700),
+    pageBuilder: (_, __, ___) => _EditTaskBody(task: task),
+    transitionBuilder: _stickerTransition,
+  );
+}
+
+class _TaskActionBody extends StatelessWidget {
   final String taskName;
-  const _DeleteConfirmBody({required this.taskName});
+  const _TaskActionBody({required this.taskName});
 
   @override
   Widget build(BuildContext context) {
-    final routeAnim = ModalRoute.of(context)!.animation!;
+    final routeAnim =
+        ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 36),
@@ -838,12 +896,13 @@ class _DeleteConfirmBody extends StatelessWidget {
                         fromRotationDeg: -18,
                         fromScale: 0.80,
                         child: _ConfirmButton(
-                          label: 'keep it',
-                          fill: TM.cream2,
+                          label: 'edit it',
+                          fill: TM.mint,
                           textColor: TM.ink,
                           shadowColor: TM.ink,
                           rotation: -2,
-                          onTap: () => Navigator.of(context).pop(false),
+                          onTap: () =>
+                              Navigator.of(context).pop(_TaskAction.edit),
                         ),
                       ),
                     ),
@@ -862,13 +921,196 @@ class _DeleteConfirmBody extends StatelessWidget {
                           textColor: TM.cream,
                           shadowColor: TM.lemon,
                           rotation: 2,
-                          onTap: () => Navigator.of(context).pop(true),
+                          onTap: () =>
+                              Navigator.of(context).pop(_TaskAction.delete),
                         ),
                       ),
                     ),
                   ],
                 ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EditTaskBody extends StatefulWidget {
+  final Task task;
+  const _EditTaskBody({required this.task});
+
+  @override
+  State<_EditTaskBody> createState() => _EditTaskBodyState();
+}
+
+class _EditTaskBodyState extends State<_EditTaskBody> {
+  late final TextEditingController _controller;
+  late final FocusNode _focus;
+  late int _remaining;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.task.name);
+    _remaining = widget.task.remaining.clamp(1, 99);
+    _focus = FocusNode();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final name = _controller.text.trim();
+    if (name.isEmpty) return;
+    context.read<TaskProvider>().editTask(
+          widget.task.id,
+          name: name,
+          remaining: _remaining,
+        );
+    HapticFeedback.lightImpact();
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final routeAnim =
+        ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation;
+    final kbInset = MediaQuery.of(context).viewInsets.bottom;
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(36, 0, 36, kbInset),
+        child: Transform.rotate(
+          angle: 1.5 * math.pi / 180,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+            decoration: BoxDecoration(
+              color: TM.cream,
+              border: Border.all(color: TM.ink, width: 3),
+              boxShadow: const [
+                BoxShadow(color: TM.mint, offset: Offset(4, 4)),
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'EDIT TASK',
+                    style: TMText.display(
+                      fontSize: 18,
+                      letterSpacing: 1,
+                      color: TM.ink,
+                    ),
+                  ),
+                  const MarkerUnderline(width: 100, color: TM.mint),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _controller,
+                    focusNode: _focus,
+                    cursorColor: TM.tomato,
+                    style: TMText.marker(
+                      fontSize: 22,
+                      color: TM.ink,
+                      weight: FontWeight.w700,
+                    ),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      contentPadding:
+                          const EdgeInsets.symmetric(vertical: 4),
+                      hintText: 'task name',
+                      hintStyle: TMText.marker(
+                        fontSize: 22,
+                        color: TM.ink.withValues(alpha: 0.35),
+                        weight: FontWeight.w700,
+                      ),
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      filled: false,
+                    ),
+                    maxLines: 1,
+                    maxLength: 40,
+                    buildCounter: (_,
+                            {required currentLength,
+                            required isFocused,
+                            required maxLength}) =>
+                        null,
+                    textCapitalization: TextCapitalization.sentences,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _save(),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Text(
+                        'pomodoros:',
+                        style: TMText.marker(
+                          fontSize: 18,
+                          color: TM.ink.withValues(alpha: 0.7),
+                        ),
+                      ),
+                      const Spacer(),
+                      _MiniStep(
+                        label: '−',
+                        onTap: () => setState(() {
+                          _remaining = (_remaining - 1).clamp(1, 99);
+                        }),
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        width: 22,
+                        child: Text(
+                          '$_remaining',
+                          textAlign: TextAlign.center,
+                          style: TMText.display(
+                            fontSize: 18,
+                            color: TM.ink,
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _MiniStep(
+                        label: '+',
+                        onTap: () => setState(() {
+                          _remaining = (_remaining + 1).clamp(1, 99);
+                        }),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  SuitcaseItem(
+                    animation: routeAnim,
+                    delayFraction: 0.35,
+                    spanFraction: 0.55,
+                    fromOffset: const Offset(0, 30),
+                    fromRotationDeg: -8,
+                    fromScale: 0.85,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: _ConfirmButton(
+                        label: 'SAVE IT',
+                        fill: TM.mint,
+                        textColor: TM.ink,
+                        shadowColor: TM.ink,
+                        rotation: 1,
+                        onTap: _save,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -927,4 +1169,3 @@ class _ConfirmButton extends StatelessWidget {
     );
   }
 }
-

@@ -36,25 +36,18 @@ class TimerScreen extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         const DotGridBackground(),
-        const Positioned(
-          top: 72,
-          right: 28,
+       
+        const Align(
+          alignment: Alignment(0.92, -0.85),
           child: Spark(size: 18, color: TM.lemon),
         ),
-        const Positioned(
-          top: 140,
-          left: 22,
+        const Align(
+          alignment: Alignment(-0.92, -0.55),
           child: Spark(size: 12, color: TM.cobalt),
         ),
         SafeArea(
           bottom: false,
-          // Fast upward flick anywhere on the timer surface pulls up the
-          // task list, mirroring the swipe-down-to-dismiss gesture that
-          // closes that same bottom sheet. `translucent` keeps the hit
-          // available to child taps and long-presses (control button,
-          // hamburger, sticky-note icon, timer-digits freeze) — the
-          // vertical-drag recogniser only claims the gesture once the
-          // pointer has moved meaningfully along the y-axis.
+          // Fast upward flick anywhere on the timer surface pulls up the task list
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onVerticalDragEnd: (details) {
@@ -80,13 +73,14 @@ class TimerScreen extends StatelessWidget {
                 _TimerDisplay(
                   time: timer.formattedTime,
                   isRunning: timer.isRunning,
+                  shouldPulseHint: !timer.hasSeenFreezeHintPulse,
                 ),
                 const SizedBox(height: 20),
                 _FocusCyclePills(
                   filled: timer.completedPomodoros,
                   total: timer.pomodorosPerCycle,
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 14),
                 const _ControlButton(),
                 const SizedBox(height: 16),
               ],
@@ -182,7 +176,9 @@ class _StickyNoteIcon extends StatelessWidget {
         height: 30,
         decoration: const BoxDecoration(
           color: TM.lemon,
-          boxShadow: [BoxShadow(color: TM.ink, offset: Offset(2, 2))],
+          boxShadow: [
+            BoxShadow(color: TM.ink, offset: Offset(2, 2), blurRadius: 0),
+          ],
         ),
         child: const CustomPaint(painter: _StickyLinesPainter()),
       ),
@@ -240,7 +236,7 @@ class _ActiveModuleLabel extends StatelessWidget {
               fontSize: 10,
               letterSpacing: 3,
               weight: FontWeight.w600,
-              color: TM.cream.withValues(alpha: 0.55),
+              color: TM.cream.withValues(alpha: 0.70),
             ),
           ),
           const SizedBox(height: 2),
@@ -362,7 +358,13 @@ class _DashedEllipsePainter extends CustomPainter {
 class _TimerDisplay extends StatefulWidget {
   final String time;
   final bool isRunning;
-  const _TimerDisplay({required this.time, required this.isRunning});
+  // True only while the user has never seen the freeze-hint pulse before.
+  final bool shouldPulseHint;
+  const _TimerDisplay({
+    required this.time,
+    required this.isRunning,
+    required this.shouldPulseHint,
+  });
 
   @override
   State<_TimerDisplay> createState() => _TimerDisplayState();
@@ -375,6 +377,9 @@ class _TimerDisplayState extends State<_TimerDisplay>
   // Independent looping ticker that drives the sweep-gradient highlight
   // around the frost border. Runs only while the freeze is engaged.
   late final AnimationController _shimmerCtrl;
+  // One-time upward nudge on the freeze hint, fired on the user's first
+  // press-start. 800 ms, sin half-wave: 0 → -4 px → 0.
+  late final AnimationController _hintPulseCtrl;
   bool _modalOpen = false;
 
   @override
@@ -389,6 +394,30 @@ class _TimerDisplayState extends State<_TimerDisplay>
       vsync: this,
       duration: const Duration(milliseconds: 2400),
     );
+    _hintPulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _TimerDisplay old) {
+    super.didUpdateWidget(old);
+    final justStarted = widget.isRunning && !old.isRunning;
+    if (justStarted &&
+        widget.shouldPulseHint &&
+        !_hintPulseCtrl.isAnimating &&
+        _hintPulseCtrl.status != AnimationStatus.completed) {
+      final reduceMotion = MediaQuery.of(context).disableAnimations;
+      if (!reduceMotion) {
+        _hintPulseCtrl.forward(from: 0);
+      }
+      //the user has now crossed press-start once, so the hint has served its purpose.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<TimerProvider>().markFreezeHintPulseSeen();
+      });
+    }
   }
 
   @override
@@ -397,6 +426,7 @@ class _TimerDisplayState extends State<_TimerDisplay>
       ..removeStatusListener(_onFreezeStatus)
       ..dispose();
     _shimmerCtrl.dispose();
+    _hintPulseCtrl.dispose();
     super.dispose();
   }
 
@@ -448,9 +478,8 @@ class _TimerDisplayState extends State<_TimerDisplay>
     // to skip or restart.
     if (!widget.isRunning) return;
     final reduceMotion = MediaQuery.of(context).disableAnimations;
-    _freezeCtrl.duration = reduceMotion
-        ? Duration.zero
-        : const Duration(milliseconds: 2000);
+    _freezeCtrl.duration =
+        reduceMotion ? Duration.zero : const Duration(milliseconds: 2000);
     _freezeCtrl.forward();
     if (!reduceMotion && !_shimmerCtrl.isAnimating) {
       _shimmerCtrl.repeat();
@@ -498,22 +527,30 @@ class _TimerDisplayState extends State<_TimerDisplay>
         // shimmer frame. Hidden entirely when the timer isn't running, since
         // the gesture is gated on isRunning.
         AnimatedBuilder(
-          animation: _freezeCtrl,
-          builder: (_, __) => Opacity(
-            opacity: widget.isRunning
-                ? (1.0 - _freezeCtrl.value).clamp(0.0, 1.0)
-                : 0.0,
-            child: Transform.rotate(
-              angle: -2.3 * math.pi / 180,
-              child: Text(
-                'hold timer for more options',
-                style: TMText.marker(
-                  fontSize: 14,
-                  color: TM.cream.withValues(alpha: 0.55),
+          animation: Listenable.merge([_freezeCtrl, _hintPulseCtrl]),
+          builder: (_, __) {
+            final pulseY = _hintPulseCtrl.value > 0 && _hintPulseCtrl.value < 1
+                ? math.sin(_hintPulseCtrl.value * math.pi) * -4
+                : 0.0;
+            return Opacity(
+              opacity: widget.isRunning
+                  ? (1.0 - _freezeCtrl.value).clamp(0.0, 1.0)
+                  : 0.0,
+              child: Transform.translate(
+                offset: Offset(0, pulseY),
+                child: Transform.rotate(
+                  angle: -1.0 * math.pi / 180,
+                  child: Text(
+                    'hold timer for more options',
+                    style: TMText.marker(
+                      fontSize: 14,
+                      color: TM.cream.withValues(alpha: 0.75),
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
         const SizedBox(height: 6),
         GestureDetector(
@@ -538,8 +575,6 @@ class _TimerDisplayState extends State<_TimerDisplay>
   }
 }
 
-/// Rotates a set of marker-voice motivational lines under the timer.
-/// Swaps every 13 seconds with a soft cross-fade. Respects reduced-motion.
 class _RotatingSubtitle extends StatefulWidget {
   const _RotatingSubtitle();
 
@@ -548,24 +583,49 @@ class _RotatingSubtitle extends StatefulWidget {
 }
 
 class _RotatingSubtitleState extends State<_RotatingSubtitle> {
-  static const _lines = <String>[
+  static const _focusLines = <String>[
     'it gets easier, trust me bro',
     'breathe in. breathe out. type.',
     "you've survived worse. like monday.",
     'tabs can wait. they always do.',
     'one tomato at a time, hero.',
   ];
+  static const _breakLines = <String>[
+    'go look out a window.',
+    'stretch the legs. stretch the soul.',
+    'a tomato a day keeps the chaos at bay.',
+    'drink some water, future you.',
+    'look away from the screen. yes really.',
+  ];
 
+  final math.Random _rng = math.Random();
   int _index = 0;
+  bool? _prevIsFocusPhase;
   Timer? _ticker;
 
   @override
   void initState() {
     super.initState();
-    _ticker = Timer.periodic(const Duration(seconds: 13), (_) {
+    _ticker = Timer.periodic(const Duration(seconds: 27), (_) {
       if (!mounted) return;
-      setState(() => _index = (_index + 1) % _lines.length);
+      // No state churn under reduced motion — line stays stable.
+      if (MediaQuery.of(context).disableAnimations) return;
+      setState(() => _index = _pickNextIndex());
     });
+  }
+
+  /// Pick any index in the active bank except the current one, so the
+  /// same line never shows twice in a row.
+  int _pickNextIndex() {
+    final bankSize = _activeBank().length;
+    if (bankSize <= 1) return 0;
+    final offset = _rng.nextInt(bankSize - 1) + 1;
+    return (_index + offset) % bankSize;
+  }
+
+  List<String> _activeBank() {
+    final isFocus = _prevIsFocusPhase ?? true;
+    return isFocus ? _focusLines : _breakLines;
   }
 
   @override
@@ -577,10 +637,27 @@ class _RotatingSubtitleState extends State<_RotatingSubtitle> {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.of(context).disableAnimations;
+    final isFocusPhase = context.select<TimerProvider, bool>(
+      (t) => t.isFocusPhase,
+    );
+
+    // Phase flip → snap to a fresh random line from the new bank so the
+    // break user doesn't get a focus-voice line lingering on screen.
+    if (_prevIsFocusPhase != null && _prevIsFocusPhase != isFocusPhase) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final newBank = isFocusPhase ? _focusLines : _breakLines;
+        setState(() => _index = _rng.nextInt(newBank.length));
+      });
+    }
+    _prevIsFocusPhase = isFocusPhase;
+
+    final bank = isFocusPhase ? _focusLines : _breakLines;
+    final safeIndex = _index % bank.length;
+
     return AnimatedSwitcher(
-      duration: reduceMotion
-          ? Duration.zero
-          : const Duration(milliseconds: 500),
+      duration:
+          reduceMotion ? Duration.zero : const Duration(milliseconds: 500),
       switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeInCubic,
       transitionBuilder: (child, anim) {
@@ -604,8 +681,10 @@ class _RotatingSubtitleState extends State<_RotatingSubtitle> {
         );
       },
       child: Text(
-        _lines[_index],
-        key: ValueKey(_index),
+        bank[safeIndex],
+        // Key includes the bank identity so the cross-fade fires when the
+        // phase flips, not just when the index changes.
+        key: ValueKey('${isFocusPhase ? 'f' : 'b'}-$safeIndex'),
         style: TMText.ui(
           fontSize: 11,
           letterSpacing: 2,
@@ -766,6 +845,7 @@ class _ControlButtonState extends State<_ControlButton>
   // Drives the "no, you can't pause" horizontal shake when the user taps
   // the button while Strict Mode + running has locked it.
   late final AnimationController _shakeCtrl;
+  late final AnimationController _lockMsgCtrl;
   Timer? _idleNudgeTimer;
   TimerStatus? _prevStatus;
   bool? _prevStrictLocked;
@@ -790,6 +870,10 @@ class _ControlButtonState extends State<_ControlButton>
       vsync: this,
       duration: const Duration(milliseconds: 180),
     );
+    _lockMsgCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
   }
 
   @override
@@ -799,6 +883,7 @@ class _ControlButtonState extends State<_ControlButton>
     _burstCtrl.dispose();
     _idleHintCtrl.dispose();
     _shakeCtrl.dispose();
+    _lockMsgCtrl.dispose();
     super.dispose();
   }
 
@@ -840,9 +925,7 @@ class _ControlButtonState extends State<_ControlButton>
     final reduced = MediaQuery.of(context).disableAnimations;
     final wasRunning = timer.isRunning;
 
-    // Strict Mode lock: the button is visible but inert. Acknowledge the
-    // tap with a light haptic and a brief horizontal head-shake; do NOT
-    // touch the timer state.
+    // Strict Mode lock
     if (wasRunning && timer.strictModeOn) {
       HapticFeedback.selectionClick();
       if (reduced) {
@@ -851,6 +934,7 @@ class _ControlButtonState extends State<_ControlButton>
         _pressCtrl.reverse();
         _shakeCtrl.forward(from: 0);
       }
+      _lockMsgCtrl.forward(from: 0);
       return;
     }
 
@@ -931,7 +1015,13 @@ class _ControlButtonState extends State<_ControlButton>
         onTapCancel: _onTapCancel,
         child: AnimatedBuilder(
           animation: Listenable.merge(
-            <Listenable>[_pressCtrl, _burstCtrl, _idleHintCtrl, _shakeCtrl],
+            <Listenable>[
+              _pressCtrl,
+              _burstCtrl,
+              _idleHintCtrl,
+              _shakeCtrl,
+              _lockMsgCtrl,
+            ],
           ),
           builder: (context, _) {
             final pressEase = Curves.easeOutQuart.transform(_pressCtrl.value);
@@ -945,7 +1035,10 @@ class _ControlButtonState extends State<_ControlButton>
             // (burst.value 0 → 0.46). Sin half-wave gives a clean overshoot
             // without spring / elastic feel.
             double rebound = 1.0;
-            if (!reduced && _variant == BurstVariant.burst && burst > 0 && burst < 0.46) {
+            if (!reduced &&
+                _variant == BurstVariant.burst &&
+                burst > 0 &&
+                burst < 0.46) {
               final phase = burst / 0.46;
               rebound = 1.0 + 0.06 * math.sin(phase * math.pi);
             }
@@ -955,16 +1048,15 @@ class _ControlButtonState extends State<_ControlButton>
             // Shadow offset interp during press: (4,4) → (1,1). When locked
             // the shadow stays snapped at (1,1) regardless of press — the
             // button reads as "already pushed in, going nowhere".
-            final shadowDx =
-                strictLocked ? 1.0 : 4.0 - 3.0 * pressEase;
-            final shadowDy =
-                strictLocked ? 1.0 : 4.0 - 3.0 * pressEase;
+            final shadowDx = strictLocked ? 1.0 : 4.0 - 3.0 * pressEase;
+            final shadowDy = strictLocked ? 1.0 : 4.0 - 3.0 * pressEase;
 
             // Tomato2 misregistration ghost behind the button.
             final ghostOpacity = 0.30 * pressEase;
 
             final showBurst = !reduced && burst > 0 && burst < 1;
-            final showBurstVariant = showBurst && _variant == BurstVariant.burst;
+            final showBurstVariant =
+                showBurst && _variant == BurstVariant.burst;
             final showDeflateVariant =
                 showBurst && _variant == BurstVariant.deflate;
 
@@ -974,119 +1066,160 @@ class _ControlButtonState extends State<_ControlButton>
                 ? math.sin(shakeT * math.pi * 3) * 6 * (1 - shakeT)
                 : 0.0;
 
-            return Transform.translate(
+            // Strict-mode lock caption
+            final lockMsgT = _lockMsgCtrl.value;
+            double lockMsgOpacity = 0.0;
+            if (lockMsgT > 0 && lockMsgT < 1) {
+              if (lockMsgT < 0.10) {
+                lockMsgOpacity = lockMsgT / 0.10;
+              } else if (lockMsgT < 0.85) {
+                lockMsgOpacity = 1.0;
+              } else {
+                lockMsgOpacity = 1.0 - (lockMsgT - 0.85) / 0.15;
+              }
+            }
+
+            final lockCaption = SizedBox(
+              height: 18,
+              child: Opacity(
+                opacity: lockMsgOpacity,
+                child: Transform.rotate(
+                  angle: -1.0 * math.pi / 180,
+                  child: Text(
+                    'strict mode is on, focus first',
+                    style: TMText.marker(
+                      fontSize: 14,
+                      color: TM.cream.withValues(alpha: 0.85),
+                    ),
+                  ),
+                ),
+              ),
+            );
+
+            final shakenButton = Transform.translate(
               offset: Offset(shakeDx, 0),
               child: Transform.scale(
-              scaleX: effectiveScaleX,
-              scaleY: effectiveScaleY,
-              alignment: Alignment.center,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Tomato2 misregistration ghost (press feedback) — behind.
-                  if (!reduced && ghostOpacity > 0.005)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: Transform.translate(
-                          offset: const Offset(-5, 3),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: TM.tomato2.withValues(alpha: ghostOpacity),
-                              borderRadius: BorderRadius.circular(999),
+                scaleX: effectiveScaleX,
+                scaleY: effectiveScaleY,
+                alignment: Alignment.center,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Tomato2 misregistration ghost (press feedback) — behind.
+                    if (!reduced && ghostOpacity > 0.005)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: Transform.translate(
+                            offset: const Offset(-5, 3),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color:
+                                    TM.tomato2.withValues(alpha: ghostOpacity),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
 
-                  // Deflate ripple — BEHIND the button.
-                  if (showDeflateVariant)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: CustomPaint(
-                          painter: DeflateRipplePainter(
-                            progress: burst,
-                            color: TM.cream2,
+                    // Deflate ripple — BEHIND the button.
+                    if (showDeflateVariant)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: DeflateRipplePainter(
+                              progress: burst,
+                              color: TM.cream2,
+                            ),
                           ),
                         ),
                       ),
+
+                    // Main button body.
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeOutCubic,
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: bgColor,
+                        border: Border.all(color: TM.ink, width: 3),
+                        borderRadius: BorderRadius.circular(999),
+                        boxShadow: [
+                          BoxShadow(
+                            color: TM.lemon,
+                            offset: Offset(shadowDx, shadowDy),
+                            blurRadius: 0,
+                          ),
+                        ],
+                      ),
+                      alignment: Alignment.center,
+                      child: _BurstLabel(
+                        label: label,
+                        burst: burst,
+                        variant: _variant,
+                        reducedMotion: reduced,
+                      ),
                     ),
 
-                  // Main button body.
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeOutCubic,
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    decoration: BoxDecoration(
-                      color: bgColor,
-                      border: Border.all(color: TM.ink, width: 3),
-                      borderRadius: BorderRadius.circular(999),
-                      boxShadow: [
-                        BoxShadow(
-                          color: TM.lemon,
-                          offset: Offset(shadowDx, shadowDy),
-                        ),
-                      ],
-                    ),
-                    alignment: Alignment.center,
-                    child: _BurstLabel(
-                      label: label,
-                      burst: burst,
-                      variant: _variant,
-                      reducedMotion: reduced,
-                    ),
-                  ),
-
-                  // Shockwave ring — OVER the button.
-                  if (showBurstVariant)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: CustomPaint(
-                          painter: ShockwaveRingPainter(
-                            progress: burst,
-                            color: ringColor,
+                    // Shockwave ring — OVER the button.
+                    if (showBurstVariant)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: ShockwaveRingPainter(
+                              progress: burst,
+                              color: ringColor,
+                            ),
                           ),
                         ),
                       ),
-                    ),
 
-                  // Confetti streamers (radiating from centre).
-                  if (showBurstVariant)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: CustomPaint(
-                          painter: ConfettiStreamerPainter(progress: burst),
+                    // Confetti streamers (radiating from centre).
+                    if (showBurstVariant)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: ConfettiStreamerPainter(progress: burst),
+                          ),
                         ),
                       ),
-                    ),
 
-                  // Sparks near the bolt anchor (top-right).
-                  if (showBurstVariant)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: CustomPaint(
-                          painter: SparkBurstPainter(progress: burst),
+                    // Sparks near the bolt anchor (top-right).
+                    if (showBurstVariant)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: SparkBurstPainter(progress: burst),
+                          ),
                         ),
                       ),
-                    ),
 
-                  // Bolt — animated punch / slump / idle wiggle.
-                  Positioned(
-                    top: -8,
-                    right: 16,
-                    child: _AnimatedBolt(
-                      burst: burst,
-                      variant: _variant,
-                      idleHint: _idleHintCtrl.value,
-                      timerStatus: timer.status,
-                      reducedMotion: reduced,
-                      locked: strictLocked,
+                    // Bolt — animated punch / slump / idle wiggle.
+                    Positioned(
+                      top: -8,
+                      right: 16,
+                      child: _AnimatedBolt(
+                        burst: burst,
+                        variant: _variant,
+                        idleHint: _idleHintCtrl.value,
+                        timerStatus: timer.status,
+                        reducedMotion: reduced,
+                        locked: strictLocked,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-              ),
+            );
+
+            // Caption sits OUTSIDE the shake transform so it stays still
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                lockCaption,
+                shakenButton,
+              ],
             );
           },
         ),
@@ -1306,8 +1439,7 @@ class _AnimatedBolt extends StatelessWidget {
           rotDeg = 0 + (22 - 0) * Curves.easeOutQuart.transform(p);
         } else {
           final p = (t - 0.66) / 0.34;
-          rotDeg = 22 +
-              (_restRotDeg - 22) * Curves.easeOutQuart.transform(p);
+          rotDeg = 22 + (_restRotDeg - 22) * Curves.easeOutQuart.transform(p);
         }
       }
     }

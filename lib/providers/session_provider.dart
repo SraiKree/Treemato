@@ -10,11 +10,17 @@ import '../models/session_record.dart';
 /// Holds an in-memory list mirroring the box so reads stay synchronous;
 /// writes are mirrored to disk on every change.
 class SessionProvider extends ChangeNotifier {
+  /// Maximum number of pomodoro records kept. When exceeded the oldest
+  /// entries are deleted from both memory and the Hive box.
+  static const maxHistory = 40;
+
   final Box<SessionRecord> _box;
   final List<SessionRecord> _records = [];
 
   SessionProvider({required Box<SessionRecord> sessionsBox}) : _box = sessionsBox {
     _records.addAll(_box.values);
+    // Ensure an existing database respects the cap on first load.
+    _pruneOldest();
   }
 
   /// Unmodifiable view — callers should never mutate the list directly.
@@ -53,6 +59,18 @@ class SessionProvider extends ChangeNotifier {
     );
     _records.add(rec);
     _box.put(id, rec);
+    _pruneOldest();
     notifyListeners();
+  }
+
+  /// Remove the oldest pomodoros that exceed [maxHistory].
+  void _pruneOldest() {
+    final pomodoros = _records.where((r) => r.isPomodoro).toList()
+      ..sort((a, b) => a.startTime.compareTo(b.startTime)); // oldest first
+    while (pomodoros.length > maxHistory) {
+      final oldest = pomodoros.removeAt(0);
+      _records.remove(oldest);
+      _box.delete(oldest.id);
+    }
   }
 }

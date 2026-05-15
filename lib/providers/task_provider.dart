@@ -113,6 +113,22 @@ class TaskProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Update a task's name and/or remaining count. Empty names are ignored.
+  void editTask(String id, {String? name, int? remaining}) {
+    final idx = _tasks.indexWhere((t) => t.id == id);
+    if (idx < 0) return;
+    final task = _tasks[idx];
+    final newName = name?.trim();
+    final updated = task.copyWith(
+      name: (newName != null && newName.isNotEmpty) ? newName : null,
+      remaining: remaining?.clamp(1, 99),
+    );
+    _tasks[idx] = updated;
+    _box.put(updated.id, updated.toMap());
+    _sort();
+    notifyListeners();
+  }
+
   /// Tap the selection circle to set [id] active. Tapping the already-
   /// active row deactivates it (re-tap to unset). Done tasks cannot be
   /// activated.
