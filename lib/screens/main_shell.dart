@@ -36,8 +36,8 @@ class _MainShellState extends State<MainShell> {
               index: _index,
               children: [
                 HistoryScreen(visible: _index == 0),
-                const TimerScreen(),
-                const StatsScreen(),
+                TimerScreen(visible: _index == 1),
+                StatsScreen(visible: _index == 2),
               ],
             ),
           ),

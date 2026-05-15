@@ -107,6 +107,10 @@ class TimerProvider extends ChangeNotifier {
 
   Timer? _ticker;
   bool _celebrating = false;
+  // Flips true on the tick a short/long break phase ends, mirroring
+  // [_celebrating] for focus completions. Consumed by the UI layer to
+  // drive the onBreakOver SFX. Cleared on the next start/reset.
+  bool _onBreakOver = false;
 
   // Wall-clock timestamp captured the first time the user starts a focus
   // phase. Survives pauses (so the recorded session reflects the real
@@ -135,6 +139,7 @@ class TimerProvider extends ChangeNotifier {
   bool get isPaused => _status == TimerStatus.paused;
   bool get isIdle => _status == TimerStatus.idle;
   bool get isCelebrating => _celebrating;
+  bool get isOnBreakOver => _onBreakOver;
 
   int get pomodoroMinutes => _pomodoroMinutes;
   int get shortBreakMinutes => _shortBreakMinutes;
@@ -202,6 +207,7 @@ class TimerProvider extends ChangeNotifier {
   void startTimer() {
     if (_status == TimerStatus.running) return;
     _celebrating = false;
+    _onBreakOver = false;
     // Stamp the focus session's start at the *first* run of this phase.
     // Resumes after a pause keep the original stamp so the recorded
     // session reflects the real wall-clock span.
@@ -227,6 +233,7 @@ class TimerProvider extends ChangeNotifier {
   void resetTimer() {
     _ticker?.cancel();
     _celebrating = false;
+    _onBreakOver = false;
     _status = TimerStatus.idle;
     _secondsRemaining = _durationForPhase(phase);
     _focusPhaseStartedAt = null;
@@ -237,6 +244,7 @@ class TimerProvider extends ChangeNotifier {
   void resetCycle() {
     _ticker?.cancel();
     _celebrating = false;
+    _onBreakOver = false;
     _phaseIndex = 0;
     _status = TimerStatus.idle;
     _secondsRemaining = _durationForPhase(phase);
@@ -248,6 +256,7 @@ class TimerProvider extends ChangeNotifier {
   /// Skips do NOT log a session record — only natural completions do.
   void skipPhase() {
     _celebrating = false;
+    _onBreakOver = false;
     _advancePhase(natural: false);
   }
 
@@ -415,6 +424,13 @@ class TimerProvider extends ChangeNotifier {
     _secondsRemaining = _durationForPhase(_sequence[_phaseIndex]);
     // Pause between phases so the user explicitly starts the next one.
     _status = TimerStatus.idle;
+
+    // Edge flag for the onBreakOver SFX listener. Cleared on next
+    // start/reset like _celebrating.
+    if (completedPhase == TimerPhase.shortBreak ||
+        completedPhase == TimerPhase.longBreak) {
+      _onBreakOver = true;
+    }
 
     // Celebrate for ~3 seconds after completing a focus phase.
     if (completedPhase == TimerPhase.focus) {

@@ -6,10 +6,15 @@ import '../providers/session_provider.dart';
 import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
+import '../widgets/page_entry_sfx.dart';
 
 /// Focus Stats screen.
+///
+/// `visible` mirrors HistoryScreen / TimerScreen — plumbed from MainShell
+/// so the page-entry SFX only fires on actual tab navigation.
 class StatsScreen extends StatefulWidget {
-  const StatsScreen({super.key});
+  final bool visible;
+  const StatsScreen({super.key, this.visible = false});
 
   @override
   State<StatsScreen> createState() => _StatsScreenState();
@@ -33,6 +38,7 @@ class _StatsScreenState extends State<StatsScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
+        PageEntrySfx(visible: widget.visible, asset: 'audio/stats.mp3'),
         ParallaxDotGrid(controller: _scroll),
         SafeArea(
           bottom: false,

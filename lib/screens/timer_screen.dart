@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../providers/task_provider.dart';
 import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
@@ -12,13 +13,19 @@ import '../widgets/control_button_effects.dart';
 import '../widgets/freeze_options_modal.dart';
 import '../widgets/freeze_overlay.dart';
 import '../widgets/motifs.dart';
+import '../widgets/page_entry_sfx.dart';
 import 'task_list_screen.dart';
 
 /// Timer / Home screen.
 ///
 /// Reads all state from [TimerProvider] — no local timer or demo ticker.
+///
+/// `visible` mirrors the HistoryScreen pattern — plumbed in from MainShell
+/// so screen-entry SFX fires only on tab navigation, not on persistent
+/// rebuilds inside the IndexedStack.
 class TimerScreen extends StatelessWidget {
-  const TimerScreen({super.key});
+  final bool visible;
+  const TimerScreen({super.key, this.visible = false});
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +43,16 @@ class TimerScreen extends StatelessWidget {
       fit: StackFit.expand,
       children: [
         const DotGridBackground(),
-       
+        // Invisible listener — plays a chime whenever a focus phase
+        // completes (regular vs final-of-cycle variant) and when a break
+        // phase ends. All three on PlayerMode.mediaPlayer so long clips
+        // play to completion (SoundPool would truncate past ~5–6 s).
+        const _PhaseCompletionSfx(),
+        // Page-entry chime — plays once each time the user navigates TO
+        // the timer tab from another tab. Re-tapping the timer tab while
+        // already on it leaves `visible` true → no replay.
+        PageEntrySfx(visible: visible, asset: 'audio/timerpage.mp3'),
+
         const Align(
           alignment: Alignment(0.92, -0.85),
           child: Spark(size: 18, color: TM.lemon),
@@ -851,6 +867,15 @@ class _ControlButtonState extends State<_ControlButton>
   bool? _prevStrictLocked;
   BurstVariant _variant = BurstVariant.burst;
 
+  // Pool of pre-loaded SFX players for the strict-mode lock tap. Round-robin
+  // ensures rapid taps always hit a player that's either idle or finished,
+  // dodging audioplayers' quirk where seek/resume on a "completed" player
+  // in low-latency mode (Android SoundPool) silently no-ops.
+  static const int _lockedSfxPoolSize = 3;
+  final List<AudioPlayer> _lockedSfxPool = [];
+  int _lockedSfxIdx = 0;
+  bool _lockedSfxReady = false;
+
   @override
   void initState() {
     super.initState();
@@ -874,6 +899,45 @@ class _ControlButtonState extends State<_ControlButton>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     );
+    _initLockedSfx();
+  }
+
+  Future<void> _initLockedSfx() async {
+    try {
+      for (int i = 0; i < _lockedSfxPoolSize; i++) {
+        final p = AudioPlayer();
+        // ReleaseMode.stop keeps the source decoded between plays so
+        // there's no per-tap setup cost.
+        await p.setReleaseMode(ReleaseMode.stop);
+        await p.setPlayerMode(PlayerMode.lowLatency);
+        await p.setSource(AssetSource('audio/locked.mp3'));
+        _lockedSfxPool.add(p);
+      }
+      if (!mounted) {
+        for (final p in _lockedSfxPool) {
+          await p.dispose();
+        }
+        _lockedSfxPool.clear();
+        return;
+      }
+      _lockedSfxReady = true;
+    } catch (_) {
+      // If loading fails (missing asset, decoder error), silently degrade —
+      // the haptic + visual shake still convey the locked state.
+    }
+  }
+
+  void _playLockedSfx() {
+    if (!_lockedSfxReady || _lockedSfxPool.isEmpty) return;
+    final p = _lockedSfxPool[_lockedSfxIdx];
+    _lockedSfxIdx = (_lockedSfxIdx + 1) % _lockedSfxPool.length;
+    // stop() resets the player out of the "completed" state that swallows
+    // resume() calls in low-latency mode; chained resume() then triggers
+    // a fresh playback from the head.
+    p.stop().then((_) {
+      if (!mounted) return;
+      p.resume();
+    });
   }
 
   @override
@@ -884,6 +948,9 @@ class _ControlButtonState extends State<_ControlButton>
     _idleHintCtrl.dispose();
     _shakeCtrl.dispose();
     _lockMsgCtrl.dispose();
+    for (final p in _lockedSfxPool) {
+      p.dispose();
+    }
     super.dispose();
   }
 
@@ -918,6 +985,15 @@ class _ControlButtonState extends State<_ControlButton>
 
     if (!reduced) _pressCtrl.forward();
     HapticFeedback.selectionClick();
+
+    // Locked SFX fires here (not _onTapUp) so every interaction attempt —
+    // including a tap that gets cancelled by sliding off the button —
+    // plays the sound. Round-robin pool ensures rapid presses always
+    // land on a player that can replay.
+    final timer = context.read<TimerProvider>();
+    if (timer.isRunning && timer.strictModeOn) {
+      _playLockedSfx();
+    }
   }
 
   void _onTapUp(TapUpDetails _) {
@@ -928,6 +1004,7 @@ class _ControlButtonState extends State<_ControlButton>
     // Strict Mode lock
     if (wasRunning && timer.strictModeOn) {
       HapticFeedback.selectionClick();
+      // SFX already played on tap-down — don't replay here.
       if (reduced) {
         _pressCtrl.value = 0;
       } else {
@@ -1452,4 +1529,141 @@ class _AnimatedBolt extends StatelessWidget {
       ),
     );
   }
+}
+
+// Phase-completion SFX
+//
+// Invisible widget that subscribes to TimerProvider via addListener and
+// fires the right chime on every phase boundary:
+//
+//   - focus → regular pomo  ⇒ pomo_complete.mp3
+//   - focus → last of cycle ⇒ onFinalPomoComplete.mp3
+//   - break → next phase    ⇒ onBreakOver.mp3
+//
+// All three players run on PlayerMode.mediaPlayer because the clips are
+// long (the final-pomo cue is ~25 s). lowLatency mode is backed by
+// Android SoundPool, which truncates anything past ~5–6 s; mediaPlayer
+// streams the full file with negligible startup latency for a one-shot.
+// Pool size 1 each — phase boundaries are minutes apart, so there's no
+// rapid-fire risk.
+//
+// Variant choice for focus completions: at the moment isCelebrating
+// flips true, `_phaseIndex` has already advanced to the *next* phase.
+// If that next phase is the long break, the focus we just completed was
+// the cycle's last pomo → onFinalPomoComplete.mp3.
+//
+// Break completions use a mirrored flag on the provider (isOnBreakOver)
+// since there's no other reliable way to distinguish a natural break
+// boundary from a resetCycle / shape-rebuild from the UI side.
+//
+// Caveat: if the user changes pomodorosPerCycle / shortBreaksOn while a
+// session is running, the sequence rebuilds on the next phase boundary
+// (see TimerProvider._advancePhase). If that boundary coincides with a
+// focus completion, the rebuilt sequence starts at index 0 (focus), so
+// `phase` reads as focus rather than longBreak — we'd play the regular
+// chime even if the just-completed focus was the old cycle's last. Rare
+// edge; flag if you want different behaviour.
+class _PhaseCompletionSfx extends StatefulWidget {
+  const _PhaseCompletionSfx();
+
+  @override
+  State<_PhaseCompletionSfx> createState() => _PhaseCompletionSfxState();
+}
+
+class _PhaseCompletionSfxState extends State<_PhaseCompletionSfx> {
+  AudioPlayer? _regularPlayer;
+  AudioPlayer? _finalPlayer;
+  AudioPlayer? _breakOverPlayer;
+  bool _ready = false;
+
+  TimerProvider? _timer;
+  bool _prevCelebrating = false;
+  bool _prevBreakOver = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final timer = context.read<TimerProvider>();
+    _timer = timer;
+    _prevCelebrating = timer.isCelebrating;
+    _prevBreakOver = timer.isOnBreakOver;
+    timer.addListener(_onTimerChange);
+    _initSfx();
+  }
+
+  Future<AudioPlayer?> _prime(String asset) async {
+    final p = AudioPlayer();
+    try {
+      // mediaPlayer mode (default for AudioPlayer): no size cap, plays
+      // the full clip even past ~6 s.
+      await p.setReleaseMode(ReleaseMode.stop);
+      await p.setPlayerMode(PlayerMode.mediaPlayer);
+      await p.setSource(AssetSource(asset));
+      return p;
+    } catch (_) {
+      await p.dispose();
+      return null;
+    }
+  }
+
+  Future<void> _initSfx() async {
+    final regular = await _prime('audio/pomo_complete.mp3');
+    final fin = await _prime('audio/onFinalPomoComplete.mp3');
+    final brk = await _prime('audio/onBreakOver.mp3');
+    if (!mounted) {
+      await regular?.dispose();
+      await fin?.dispose();
+      await brk?.dispose();
+      return;
+    }
+    _regularPlayer = regular;
+    _finalPlayer = fin;
+    _breakOverPlayer = brk;
+    _ready = true;
+  }
+
+  void _onTimerChange() {
+    final t = _timer;
+    if (t == null) return;
+    final celebrating = t.isCelebrating;
+    final breakOver = t.isOnBreakOver;
+    // Edge-trigger on each flag separately. Both stay true until the
+    // next startTimer / reset, so without the edge guard we'd retrigger
+    // on every tick that follows.
+    if (celebrating && !_prevCelebrating) {
+      if (t.phase == TimerPhase.longBreak) {
+        _play(_finalPlayer);
+      } else {
+        _play(_regularPlayer);
+      }
+    }
+    if (breakOver && !_prevBreakOver) {
+      _play(_breakOverPlayer);
+    }
+    _prevCelebrating = celebrating;
+    _prevBreakOver = breakOver;
+  }
+
+  void _play(AudioPlayer? p) {
+    if (!_ready || p == null) return;
+    // stop().then(resume) restarts cleanly even if a previous play is
+    // somehow still in-flight. Phase boundaries are minutes apart so
+    // collisions effectively never happen, but the pattern is cheap.
+    p.stop().then((_) {
+      if (!mounted) return;
+      p.resume();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.removeListener(_onTimerChange);
+    _regularPlayer?.dispose();
+    _finalPlayer?.dispose();
+    _breakOverPlayer?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
