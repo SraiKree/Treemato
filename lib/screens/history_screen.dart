@@ -5,9 +5,9 @@ import '../models/session_record.dart';
 import '../providers/session_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
-import '../widgets/page_entry_sfx.dart';
 
 /// Session History screen.
+///
 ///
 /// `visible` is plumbed in from `MainShell` so the staggered slide-in plays
 /// every time the user navigates to this tab — not just once on app launch,
@@ -58,10 +58,6 @@ class _HistoryScreenState extends State<HistoryScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Page-entry chime — fires once when the user switches TO this
-        // tab. Re-tapping the same tab leaves `visible` true so nothing
-        // replays.
-        PageEntrySfx(visible: widget.visible, asset: 'audio/history.mp3'),
         ParallaxDotGrid(controller: _scroll),
         SafeArea(
           bottom: false,
@@ -171,8 +167,18 @@ DateTime _dayKey(DateTime t) => DateTime(t.year, t.month, t.day);
 
 const _weekdays = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 const _months = [
-  'jan', 'feb', 'mar', 'apr', 'may', 'jun',
-  'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+  'jan',
+  'feb',
+  'mar',
+  'apr',
+  'may',
+  'jun',
+  'jul',
+  'aug',
+  'sep',
+  'oct',
+  'nov',
+  'dec',
 ];
 
 /// Formats a non-today/non-yesterday day key as e.g. `mon, may 13`.
@@ -215,7 +221,8 @@ class _EmptyState extends StatelessWidget {
             Transform.rotate(
               angle: -3 * math.pi / 180,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
                   color: TM.ink2,
                   border: Border.all(color: TM.dim2, width: 2),
@@ -283,7 +290,8 @@ class _StaggeredEntry extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (_, child) {
-        final raw = ((controller.value - start) / (end - start)).clamp(0.0, 1.0);
+        final raw =
+            ((controller.value - start) / (end - start)).clamp(0.0, 1.0);
         final t = Curves.easeOutCubic.transform(raw);
         return Opacity(
           opacity: t,
