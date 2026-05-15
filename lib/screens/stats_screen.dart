@@ -38,7 +38,11 @@ class _StatsScreenState extends State<StatsScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        PageEntrySfx(visible: widget.visible, asset: 'audio/stats.mp3'),
+        PageEntrySfx(
+          visible: widget.visible,
+          asset: 'audio/stats.mp3',
+          muted: !context.watch<TimerProvider>().chimeSoundsOn,
+        ),
         ParallaxDotGrid(controller: _scroll),
         SafeArea(
           bottom: false,

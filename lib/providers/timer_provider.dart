@@ -66,7 +66,7 @@ class TimerProvider extends ChangeNotifier {
     _pomodorosPerCycle = (_box.get(_kPomodorosPerCycle) as int?) ?? 3;
     _shortBreaksOn = (_box.get(_kShortBreaksOn) as bool?) ?? true;
     _strictMode = (_box.get(_kStrictMode) as bool?) ?? true;
-    _chimeSounds = (_box.get(_kChimeSounds) as bool?) ?? false;
+    _chimeSounds = (_box.get(_kChimeSounds) as bool?) ?? true;
     _dailyTargetPomodoros = (_box.get(_kDailyTargetPomodoros) as int?) ?? 8;
     _hasSeenFreezeHintPulse =
         (_box.get(_kHasSeenFreezeHintPulse) as bool?) ?? false;
@@ -91,7 +91,7 @@ class TimerProvider extends ChangeNotifier {
 
   // ── Workflow flags ───────────────────────────────────────────────────
   bool _strictMode = true;
-  bool _chimeSounds = false;
+  bool _chimeSounds = true;
 
 
   int _dailyTargetPomodoros = 8;

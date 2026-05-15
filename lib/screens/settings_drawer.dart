@@ -961,8 +961,8 @@ class _SoundToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     final timer = context.watch<TimerProvider>();
     return _ToggleCard(
-      title: 'Chime sounds',
-      subtitle: 'a little "bip!" on completion',
+      title: 'Squelches & Epic music',
+      subtitle: 'all the sounds or total silence',
       on: timer.chimeSoundsOn,
       shadowColor: null,
       onTap: () {

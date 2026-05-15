@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/session_record.dart';
 import '../providers/session_provider.dart';
+import '../providers/timer_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/motifs.dart';
+import '../widgets/page_entry_sfx.dart';
 
 /// Session History screen.
 ///
@@ -58,6 +60,11 @@ class _HistoryScreenState extends State<HistoryScreen>
     return Stack(
       fit: StackFit.expand,
       children: [
+        PageEntrySfx(
+          visible: widget.visible,
+          asset: 'audio/history.mp3',
+          muted: !context.watch<TimerProvider>().chimeSoundsOn,
+        ),
         ParallaxDotGrid(controller: _scroll),
         SafeArea(
           bottom: false,

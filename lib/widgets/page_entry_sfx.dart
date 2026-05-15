@@ -8,13 +8,18 @@ import 'package:flutter/material.dart';
 /// crisp on tab navigation. Re-tapping the same tab while already on it
 /// leaves [visible] true → no edge → no replay. Re-entering a tab from
 /// elsewhere flips it back to true → one play.
+///
+/// When [muted] is true, playback is suppressed entirely so the app's
+/// global sound toggle can silence every audio source.
 class PageEntrySfx extends StatefulWidget {
   final bool visible;
+  final bool muted;
   final String asset;
   const PageEntrySfx({
     super.key,
     required this.visible,
     required this.asset,
+    this.muted = false,
   });
 
   @override
@@ -52,6 +57,7 @@ class _PageEntrySfxState extends State<PageEntrySfx> {
   }
 
   void _play() {
+    if (widget.muted) return;
     final p = _player;
     if (!_ready || p == null) return;
     p.stop().then((_) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:provider/provider.dart';
 import 'models/session_record.dart';
@@ -10,6 +11,9 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Offline-only: never let google_fonts attempt a runtime HTTP fetch.
+  // All used families are bundled under assets/google_fonts/.
+  GoogleFonts.config.allowRuntimeFetching = false;
   await Hive.initFlutter();
   Hive.registerAdapter(SessionRecordAdapter());
   final settingsBox = await Hive.openBox<dynamic>('settings');

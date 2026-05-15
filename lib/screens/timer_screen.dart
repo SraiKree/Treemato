@@ -51,7 +51,11 @@ class TimerScreen extends StatelessWidget {
         // Page-entry chime — plays once each time the user navigates TO
         // the timer tab from another tab. Re-tapping the timer tab while
         // already on it leaves `visible` true → no replay.
-        PageEntrySfx(visible: visible, asset: 'audio/timerpage.mp3'),
+        PageEntrySfx(
+          visible: visible,
+          asset: 'audio/timerpage.mp3',
+          muted: !timer.chimeSoundsOn,
+        ),
 
         const Align(
           alignment: Alignment(0.92, -0.85),
@@ -72,34 +76,78 @@ class TimerScreen extends StatelessWidget {
               // bottom sheet uses to dismiss. Symmetric on the way in.
               if (v < -700) TaskListScreen.show(context);
             },
-            child: Column(
-              children: [
-                const _TopBar(),
-                const SizedBox(height: 12),
-                _ActiveModuleLabel(task: moduleLabel),
-                const Spacer(),
-                _MascotWithOrbit(
+            // LayoutBuilder picks a mascot-orbit scale tier from the
+            // available body height so smaller phones (Samsung A-series,
+            // 360x780-ish dp) still fit the START button above the bottom
+            // shell. If even the tightest tier would overflow (foldable
+            // inner cover, split-screen), we fall back to a scrollable
+            // column — that loses the flick-up gesture on those extreme
+            // viewports, but the sticky-note icon still opens tasks.
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final h = constraints.maxHeight;
+                final mascotScale = h >= 700 ? 1.0 : 0.85;
+
+                final mascotChildren = <Widget>[
+                  const _TopBar(),
+                  const SizedBox(height: 12),
+                  _ActiveModuleLabel(task: moduleLabel),
+                ];
+                final mascot = _MascotWithOrbit(
+                  scale: mascotScale,
                   bipState: timer.isCelebrating
                       ? BipState.done
                       : (timer.isFocusPhase && timer.isRunning)
                           ? BipState.focus
                           : BipState.idle,
-                ),
-                const Spacer(),
-                _TimerDisplay(
-                  time: timer.formattedTime,
-                  isRunning: timer.isRunning,
-                  shouldPulseHint: !timer.hasSeenFreezeHintPulse,
-                ),
-                const SizedBox(height: 20),
-                _FocusCyclePills(
-                  filled: timer.completedPomodoros,
-                  total: timer.pomodorosPerCycle,
-                ),
-                const SizedBox(height: 14),
-                const _ControlButton(),
-                const SizedBox(height: 16),
-              ],
+                );
+                final tail = <Widget>[
+                  _TimerDisplay(
+                    time: timer.formattedTime,
+                    isRunning: timer.isRunning,
+                    shouldPulseHint: !timer.hasSeenFreezeHintPulse,
+                  ),
+                  const SizedBox(height: 20),
+                  _FocusCyclePills(
+                    filled: timer.completedPomodoros,
+                    total: timer.pomodorosPerCycle,
+                  ),
+                  const SizedBox(height: 14),
+                  const _ControlButton(),
+                  const SizedBox(height: 16),
+                ];
+
+                // Rough hard-minimum: fixed children + scaled mascot. If
+                // this fits with even tiny breathing room, we use Spacers;
+                // otherwise we drop Spacers and scroll.
+                final mascotH = 280.0 * mascotScale;
+                final fixedMin = mascotH + 335;
+                final fits = fixedMin + 16 <= h;
+
+                if (fits) {
+                  return Column(
+                    children: [
+                      ...mascotChildren,
+                      const Spacer(),
+                      mascot,
+                      const Spacer(),
+                      ...tail,
+                    ],
+                  );
+                }
+                return SingleChildScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  child: Column(
+                    children: [
+                      ...mascotChildren,
+                      const SizedBox(height: 16),
+                      mascot,
+                      const SizedBox(height: 16),
+                      ...tail,
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ),
@@ -273,40 +321,44 @@ class _ActiveModuleLabel extends StatelessWidget {
 
 class _MascotWithOrbit extends StatelessWidget {
   final BipState bipState;
-  const _MascotWithOrbit({this.bipState = BipState.idle});
+  // 1.0 = full 320x280 layout. Anything < 1 proportionally shrinks the
+  // orbit box, mascot, dashed-ellipse inset, and Positioned dot offsets
+  // so the composition stays visually centered at any size.
+  final double scale;
+  const _MascotWithOrbit({this.bipState = BipState.idle, this.scale = 1.0});
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: SizedBox(
-        width: 320,
-        height: 280,
+        width: 320 * scale,
+        height: 280 * scale,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            const Positioned.fill(
+            Positioned.fill(
               child: CustomPaint(
                 painter: _DashedEllipsePainter(
-                  insetX: 20,
-                  insetY: 30,
+                  insetX: 20 * scale,
+                  insetY: 30 * scale,
                 ),
               ),
             ),
             Center(
               child: BipMascot(
                 state: bipState,
-                size: 240,
+                size: 240 * scale,
               ),
             ),
-            const Positioned(
-              top: 24,
-              left: 54,
-              child: _OrbitDot(size: 10, color: TM.cobalt),
+            Positioned(
+              top: 24 * scale,
+              left: 54 * scale,
+              child: const _OrbitDot(size: 10, color: TM.cobalt),
             ),
-            const Positioned(
-              top: 190,
-              right: 48,
-              child: _OrbitDot(size: 8, color: TM.lemon),
+            Positioned(
+              top: 190 * scale,
+              right: 48 * scale,
+              child: const _OrbitDot(size: 8, color: TM.lemon),
             ),
           ],
         ),
@@ -929,6 +981,8 @@ class _ControlButtonState extends State<_ControlButton>
 
   void _playLockedSfx() {
     if (!_lockedSfxReady || _lockedSfxPool.isEmpty) return;
+    // Respect the global sound toggle.
+    if (!context.read<TimerProvider>().chimeSoundsOn) return;
     final p = _lockedSfxPool[_lockedSfxIdx];
     _lockedSfxIdx = (_lockedSfxIdx + 1) % _lockedSfxPool.length;
     // stop() resets the player out of the "completed" state that swallows
@@ -1646,6 +1700,8 @@ class _PhaseCompletionSfxState extends State<_PhaseCompletionSfx> {
 
   void _play(AudioPlayer? p) {
     if (!_ready || p == null) return;
+    // Respect the global sound toggle.
+    if (!(_timer?.chimeSoundsOn ?? false)) return;
     // stop().then(resume) restarts cleanly even if a previous play is
     // somehow still in-flight. Phase boundaries are minutes apart so
     // collisions effectively never happen, but the pattern is cheap.
