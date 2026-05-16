@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 
+import '../services/phase_timer_service.dart';
+
 // Hive keys for the single 'settings' box. Keep stringly-typed constants
 // here so a typo in one place can't silently miss the persisted value.
 const _kPomodoroMinutes = 'pomodoroMinutes';
@@ -217,7 +219,81 @@ class TimerProvider extends ChangeNotifier {
     _status = TimerStatus.running;
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    // Spin up the foreground service so the timer survives screen-off.
+    // Fire-and-forget — the in-app ticker above is the foreground
+    // source of truth; the service only matters when the OS suspends us.
+    unawaited(PhaseTimerService.start(
+      phaseLabel: phaseLabel,
+      totalSeconds: _secondsRemaining,
+      currentPhase: phase.name,
+      isLastFocusOfCycle: _isNextLongBreak(),
+      chimeSoundsOn: _chimeSounds,
+    ));
     notifyListeners();
+  }
+
+  /// True when the current phase is a focus block and the very next
+  /// phase in the sequence is the long break — i.e. completing the
+  /// current phase will end the cycle. Mirrors the post-advance check
+  /// `t.phase == TimerPhase.longBreak` used by the in-app SFX widget,
+  /// but evaluated *before* advance so the service can decide variant
+  /// without a `TimerProvider` instance.
+  ///
+  /// Same caveat as `_PhaseCompletionSfx`: a `_pendingSequenceRebuild`
+  /// queued mid-flight will shift the post-advance phase, so this
+  /// lookahead can mis-predict. Acceptable — the user has the same
+  /// behaviour in the foreground path today.
+  bool _isNextLongBreak() {
+    if (phase != TimerPhase.focus) return false;
+    final next = (_phaseIndex + 1) % _sequence.length;
+    return _sequence[next] == TimerPhase.longBreak;
+  }
+
+  /// Reconcile the in-app countdown against the service's wall-clock
+  /// end timestamp. Call this whenever the app returns to the
+  /// foreground (see `_ForegroundLifecycleSync` in `main.dart`).
+  ///
+  /// Why this exists: while the app is backgrounded with the screen
+  /// off, Android suspends the UI isolate, which freezes
+  /// [Timer.periodic]. When the user reopens the app, the ticker
+  /// resumes from wherever [_secondsRemaining] was at suspension —
+  /// not where the wall-clock actually is. Without this reconcile,
+  /// the timer display would lag by minutes and would *replay* the
+  /// chime when it eventually catches up to zero (even though the
+  /// service already played it through the speaker while the user
+  /// was away).
+  ///
+  /// Behaviour:
+  ///   - Not running → no-op (paused / idle phases don't have a
+  ///     stamped wall-clock end, so there's nothing to reconcile
+  ///     against).
+  ///   - Wall-clock end already passed → snap forward to the next
+  ///     phase via [_advancePhase] with `replayCelebration: false`
+  ///     so the chime / mascot don't fire (service handled both).
+  ///   - Wall-clock end still in the future → update
+  ///     [_secondsRemaining] to the true remaining count.
+  Future<void> reconcileFromWallClock() async {
+    if (_status != TimerStatus.running) return;
+    final endMs = await PhaseTimerService.readPhaseEndsAtMs();
+    if (endMs == null) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (nowMs >= endMs) {
+      // Phase ended while we were suspended. The service already
+      // chimed at the wall-clock boundary, so suppress celebration
+      // flags but still record the session at its true end time.
+      final realEnd = DateTime.fromMillisecondsSinceEpoch(endMs);
+      _advancePhase(
+        natural: true,
+        replayCelebration: false,
+        overrideEndTime: realEnd,
+      );
+    } else {
+      final remaining = ((endMs - nowMs) / 1000).ceil();
+      if (remaining != _secondsRemaining) {
+        _secondsRemaining = remaining;
+        notifyListeners();
+      }
+    }
   }
 
   /// Pause the countdown, keeping the current remaining time.
@@ -225,6 +301,7 @@ class TimerProvider extends ChangeNotifier {
     if (_status != TimerStatus.running) return;
     _ticker?.cancel();
     _status = TimerStatus.paused;
+    unawaited(PhaseTimerService.stop());
     notifyListeners();
   }
 
@@ -237,6 +314,7 @@ class TimerProvider extends ChangeNotifier {
     _status = TimerStatus.idle;
     _secondsRemaining = _durationForPhase(phase);
     _focusPhaseStartedAt = null;
+    unawaited(PhaseTimerService.stop());
     notifyListeners();
   }
 
@@ -249,6 +327,7 @@ class TimerProvider extends ChangeNotifier {
     _status = TimerStatus.idle;
     _secondsRemaining = _durationForPhase(phase);
     _focusPhaseStartedAt = null;
+    unawaited(PhaseTimerService.stop());
     notifyListeners();
   }
 
@@ -403,8 +482,29 @@ class TimerProvider extends ChangeNotifier {
     }
   }
 
-  void _advancePhase({bool natural = true}) {
+  /// [natural] — true when the phase ended by countdown; false when
+  ///   the user skipped. Drives session-record placeholders.
+  /// [replayCelebration] — set false ONLY when reconciling on app
+  ///   resume (see [reconcileFromWallClock]). The service already
+  ///   chimed and the mascot would be celebrating something the user
+  ///   has long since missed, so we suppress those edge-flag flips.
+  ///   Session recording and task-decrement still fire — the work
+  ///   genuinely happened, just unattended.
+  /// [overrideEndTime] — when reconciling, the user re-opens the app
+  ///   minutes after the wall-clock phase end. Using `DateTime.now()`
+  ///   as the session end would falsify the History row, so the
+  ///   caller passes the real end timestamp here.
+  void _advancePhase({
+    bool natural = true,
+    bool replayCelebration = true,
+    DateTime? overrideEndTime,
+  }) {
     _ticker?.cancel();
+    // The service was spun up by [startTimer] for the just-finished
+    // phase. Tear it down here — the next phase auto-pauses to idle
+    // (see status assignment below), so there is no reason to keep
+    // the foreground notification alive between phases.
+    unawaited(PhaseTimerService.stop());
     final completedPhase = _sequence[_phaseIndex];
     // Snapshot before clearing — the session-completed callback fires
     // below and needs the stamp captured at first-start of this phase.
@@ -427,19 +527,20 @@ class TimerProvider extends ChangeNotifier {
 
     // Edge flag for the onBreakOver SFX listener. Cleared on next
     // start/reset like _celebrating.
-    if (completedPhase == TimerPhase.shortBreak ||
-        completedPhase == TimerPhase.longBreak) {
+    if (replayCelebration &&
+        (completedPhase == TimerPhase.shortBreak ||
+            completedPhase == TimerPhase.longBreak)) {
       _onBreakOver = true;
     }
 
     // Celebrate for ~3 seconds after completing a focus phase.
     if (completedPhase == TimerPhase.focus) {
-      _celebrating = true;
+      if (replayCelebration) _celebrating = true;
       // Session record FIRST so the wiring in main.dart can read the
       // active task before onFocusCompleted potentially clears it.
       // Natural completion → real start stamp, configured duration.
       // Skip → placeholder stamps (the History row ignores them).
-      final now = DateTime.now();
+      final now = overrideEndTime ?? DateTime.now();
       onFocusSessionCompleted?.call(
         startedAt ?? now,
         now,
@@ -466,6 +567,7 @@ class TimerProvider extends ChangeNotifier {
   @override
   void dispose() {
     _ticker?.cancel();
+    unawaited(PhaseTimerService.stop());
     super.dispose();
   }
 }

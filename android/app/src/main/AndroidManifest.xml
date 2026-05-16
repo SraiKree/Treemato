@@ -1,4 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Foreground service: keeps the timer's Dart isolate alive while a
+         pomodoro/break phase is running so the phase-end chime plays even
+         when the screen is off. POST_NOTIFICATIONS is the runtime permission
+         Android 13+ requires for the (low-importance) service notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Treemato"
         android:name="${applicationName}"
@@ -30,6 +38,32 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- flutter_foreground_task's foreground service.
+             Required by the plugin (see its README) — the plugin does
+             NOT contribute this tag from its own manifest, so without
+             this declaration startService() silently returns
+             ServiceRequestFailure and the pomodoro chime never fires
+             with the screen off.
+
+             android:name MUST match the plugin's service class
+             verbatim — do not rename.
+
+             foregroundServiceType="dataSync" pairs with the
+             FOREGROUND_SERVICE_DATA_SYNC permission declared above.
+             Semantic match: the service exists to keep a long-running
+             countdown alive in the background, not to play continuous
+             media.
+
+             android:exported="false" — only this app launches it.
+             We omit android:stopWithTask so the service keeps running
+             when the user swipes the app from recents (a pomodoro
+             you've started should still ring even if you swipe
+             away). -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
