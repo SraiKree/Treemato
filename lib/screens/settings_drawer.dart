@@ -14,12 +14,14 @@ class SettingsDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Drawer(
-      backgroundColor: const Color(0xFF050505),
+      backgroundColor: TM.inkDeep,
       elevation: 0,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
       width: MediaQuery.of(context).size.width * 0.82,
       child: Stack(
         children: [
+          // Decorative texture, not a value glyph — misregistration
+          // ghost is intentionally omitted here (see DESIGN.md §2).
           Positioned(
             right: -18,
             top: 120,
@@ -132,22 +134,29 @@ class _CloseChip extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: Transform.rotate(
-        angle: -3 * math.pi / 180,
-        child: Container(
-          width: 34,
-          height: 34,
-          decoration: BoxDecoration(
-            color: TM.cream,
-            border: Border.all(color: TM.ink, width: 2),
-            boxShadow: const [
-              BoxShadow(color: TM.tomato, offset: Offset(2, 2)),
-            ],
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            '✕',
-            style: TMText.display(fontSize: 18, color: TM.ink, height: 1.0),
+      // Hit area expanded to 44×44 for WCAG 2.5.5; visible chip stays 34×34.
+      child: SizedBox(
+        width: 44,
+        height: 44,
+        child: Center(
+          child: Transform.rotate(
+            angle: -3 * math.pi / 180,
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: TM.cream,
+                border: Border.all(color: TM.ink, width: 2),
+                boxShadow: const [
+                  BoxShadow(color: TM.tomato, offset: Offset(2, 2)),
+                ],
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                '✕',
+                style: TMText.display(fontSize: 18, color: TM.ink, height: 1.0),
+              ),
+            ),
           ),
         ),
       ),
@@ -171,8 +180,10 @@ class _DurationRow extends StatelessWidget {
     required this.subtitle,
   });
 
-  /// Read the current value for this row from the provider.
-  int _read(TimerProvider t) {
+  /// Selector for this row's single minutes field. Used with
+  /// `context.select` so the row only rebuilds when *its own* value changes,
+  /// not when any other field on the provider changes.
+  int _selectMinutes(TimerProvider t) {
     switch (kind) {
       case _DurIcon.tomato:
         return t.pomodoroMinutes;
@@ -197,8 +208,8 @@ class _DurationRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timer = context.watch<TimerProvider>();
-    final value = _read(timer).toString();
+    final minutes = context.select<TimerProvider, int>(_selectMinutes);
+    final value = minutes.toString();
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
@@ -246,8 +257,11 @@ class _DurationRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
-                child: RichText(
-                  text: TextSpan(
+                // Text.rich (unlike RichText) inherits MediaQuery.textScaler,
+                // so the 44 px numeral grows with the user's system text-size
+                // setting. Clamp at 1.4× to keep the row from overflowing.
+                child: Text.rich(
+                  TextSpan(
                     style: TMText.display(
                       fontSize: 44,
                       letterSpacing: -1,
@@ -265,6 +279,8 @@ class _DurationRow extends StatelessWidget {
                       ),
                     ],
                   ),
+                  textScaler: MediaQuery.textScalerOf(context)
+                      .clamp(maxScaleFactor: 1.4),
                 ),
               ),
               _StepButton(
@@ -272,7 +288,7 @@ class _DurationRow extends StatelessWidget {
                 shadowColor: TM.ink,
                 onTap: () {
                   HapticFeedback.selectionClick();
-                  _write(timer, -1);
+                  _write(context.read<TimerProvider>(), -1);
                 },
               ),
               const SizedBox(width: 8),
@@ -281,7 +297,7 @@ class _DurationRow extends StatelessWidget {
                 shadowColor: TM.lemon,
                 onTap: () {
                   HapticFeedback.selectionClick();
-                  _write(timer, 1);
+                  _write(context.read<TimerProvider>(), 1);
                 },
               ),
             ],
@@ -372,26 +388,33 @@ class _StepButtonState extends State<_StepButton> {
       onTapDown: (_) => _start(),
       onTapUp: (_) => _stop(),
       onTapCancel: _stop,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          color: TM.tomato,
-          border: Border.all(color: TM.ink, width: 2),
-          // Shadow snaps in toward the body while pressed — same idiom
-          // the main control button uses, so the stepper feels part of
-          // the same family.
-          boxShadow: [
-            BoxShadow(
-              color: widget.shadowColor,
-              offset: _pressed ? const Offset(1, 1) : const Offset(2, 2),
+      // Hit area expanded to 44×44 for WCAG 2.5.5; visible sticker stays 40×40.
+      child: SizedBox(
+        width: 44,
+        height: 44,
+        child: Center(
+          child: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: TM.tomato,
+              border: Border.all(color: TM.ink, width: 2),
+              // Shadow snaps in toward the body while pressed — same idiom
+              // the main control button uses, so the stepper feels part of
+              // the same family.
+              boxShadow: [
+                BoxShadow(
+                  color: widget.shadowColor,
+                  offset: _pressed ? const Offset(1, 1) : const Offset(2, 2),
+                ),
+              ],
             ),
-          ],
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          widget.label,
-          style: TMText.display(fontSize: 20, color: TM.cream, height: 1.0),
+            alignment: Alignment.center,
+            child: Text(
+              widget.label,
+              style: TMText.display(fontSize: 20, color: TM.cream, height: 1.0),
+            ),
+          ),
         ),
       ),
     );
@@ -543,23 +566,21 @@ class _CycleMapState extends State<_CycleMap> {
       switch (phase) {
         case TimerPhase.focus:
           pomoNum++;
-          segments.add(_CycleSeg('P$pomoNum', TM.tomato,
-              done: done, active: active));
+          segments.add(
+              _CycleSeg('P$pomoNum', TM.tomato, done: done, active: active));
           break;
         case TimerPhase.shortBreak:
-          segments.add(_CycleSeg('b', TM.mint,
-              done: done, active: active, thin: true));
+          segments.add(
+              _CycleSeg('b', TM.mint, done: done, active: active, thin: true));
           break;
         case TimerPhase.longBreak:
-          segments.add(_CycleSeg('B', TM.cobalt,
-              done: done, active: active, big: true));
+          segments.add(
+              _CycleSeg('B', TM.cobalt, done: done, active: active, big: true));
           break;
       }
     }
 
-    final motion = reduced
-        ? Duration.zero
-        : const Duration(milliseconds: 200);
+    final motion = reduced ? Duration.zero : const Duration(milliseconds: 200);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -646,9 +667,7 @@ class _CycleMapState extends State<_CycleMap> {
           duration: motion,
           curve: Curves.easeOutCubic,
           alignment: Alignment.topCenter,
-          child: _expanded
-              ? const _CycleMapEditor()
-              : const SizedBox.shrink(),
+          child: _expanded ? const _CycleMapEditor() : const SizedBox.shrink(),
         ),
       ],
     );
@@ -679,76 +698,74 @@ class _CycleMapEditor extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            decoration: BoxDecoration(
-              color: TM.ink2,
-              border: Border.all(color: TM.dim2, width: 2),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Pomodoros per cycle',
-                        style: TMText.display(
-                          fontSize: 14,
-                          letterSpacing: 0.5,
-                        ),
+              Container(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                decoration: BoxDecoration(
+                  color: TM.ink2,
+                  border: Border.all(color: TM.dim2, width: 2),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Pomodoros per cycle',
+                            style: TMText.display(
+                              fontSize: 14,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '2..6 focus blocks before long break',
+                            style: TMText.ui(
+                              fontSize: 11,
+                              color: TM.cream.withValues(alpha: 0.65),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '2..6 focus blocks before long break',
-                        style: TMText.ui(
-                          fontSize: 11,
-                          color: TM.cream.withValues(alpha: 0.65),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${timer.pomodorosPerCycle}',
+                      style: TMText.display(fontSize: 32, height: 1.0),
+                    ),
+                    const SizedBox(width: 10),
+                    _StepButton(
+                      label: '−',
+                      shadowColor: TM.ink,
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        timer.setPomodorosPerCycle(timer.pomodorosPerCycle - 1);
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    _StepButton(
+                      label: '+',
+                      shadowColor: TM.lemon,
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        timer.setPomodorosPerCycle(timer.pomodorosPerCycle + 1);
+                      },
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  '${timer.pomodorosPerCycle}',
-                  style: TMText.display(fontSize: 32, height: 1.0),
-                ),
-                const SizedBox(width: 10),
-                _StepButton(
-                  label: '−',
-                  shadowColor: TM.ink,
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    timer
-                        .setPomodorosPerCycle(timer.pomodorosPerCycle - 1);
-                  },
-                ),
-                const SizedBox(width: 8),
-                _StepButton(
-                  label: '+',
-                  shadowColor: TM.lemon,
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    timer
-                        .setPomodorosPerCycle(timer.pomodorosPerCycle + 1);
-                  },
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 10),
-          _ToggleCard(
-            title: 'Short breaks',
-            subtitle: 'tiny breathers between focus blocks',
-            on: timer.shortBreaksOn,
-            shadowColor: TM.mint,
-            onTap: () {
-              HapticFeedback.selectionClick();
-              timer.setShortBreaksOn(!timer.shortBreaksOn);
-            },
-          ),
+              ),
+              const SizedBox(height: 10),
+              _ToggleCard(
+                title: 'Short breaks',
+                subtitle: 'tiny breathers between focus blocks',
+                on: timer.shortBreaksOn,
+                shadowColor: TM.mint,
+                onTap: () {
+                  HapticFeedback.selectionClick();
+                  timer.setShortBreaksOn(!timer.shortBreaksOn);
+                },
+              ),
             ],
           ),
         ),
@@ -848,7 +865,8 @@ class _DailyGoal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timer = context.watch<TimerProvider>();
+    final target =
+        context.select<TimerProvider, int>((t) => t.dailyTargetPomodoros);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -891,7 +909,7 @@ class _DailyGoal extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Text(
-                '${timer.dailyTargetPomodoros}',
+                '$target',
                 style: TMText.display(fontSize: 32, height: 1.0),
               ),
               const SizedBox(width: 10),
@@ -900,8 +918,8 @@ class _DailyGoal extends StatelessWidget {
                 shadowColor: TM.ink,
                 onTap: () {
                   HapticFeedback.selectionClick();
-                  timer.setDailyTargetPomodoros(
-                      timer.dailyTargetPomodoros - 1);
+                  final t = context.read<TimerProvider>();
+                  t.setDailyTargetPomodoros(t.dailyTargetPomodoros - 1);
                 },
               ),
               const SizedBox(width: 8),
@@ -910,8 +928,8 @@ class _DailyGoal extends StatelessWidget {
                 shadowColor: TM.lemon,
                 onTap: () {
                   HapticFeedback.selectionClick();
-                  timer.setDailyTargetPomodoros(
-                      timer.dailyTargetPomodoros + 1);
+                  final t = context.read<TimerProvider>();
+                  t.setDailyTargetPomodoros(t.dailyTargetPomodoros + 1);
                 },
               ),
             ],
@@ -929,7 +947,7 @@ class _WorkflowMode extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timer = context.watch<TimerProvider>();
+    final strictOn = context.select<TimerProvider, bool>((t) => t.strictModeOn);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -942,11 +960,11 @@ class _WorkflowMode extends StatelessWidget {
         _ToggleCard(
           title: 'Strict Mode',
           subtitle: 'disable pausing',
-          on: timer.strictModeOn,
+          on: strictOn,
           shadowColor: TM.lemon,
           onTap: () {
             HapticFeedback.selectionClick();
-            timer.toggleStrictMode();
+            context.read<TimerProvider>().toggleStrictMode();
           },
         ),
       ],
@@ -959,15 +977,15 @@ class _SoundToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timer = context.watch<TimerProvider>();
+    final chimeOn = context.select<TimerProvider, bool>((t) => t.chimeSoundsOn);
     return _ToggleCard(
       title: 'Squelches & Epic music',
       subtitle: 'all the sounds or total silence',
-      on: timer.chimeSoundsOn,
+      on: chimeOn,
       shadowColor: null,
       onTap: () {
         HapticFeedback.selectionClick();
-        timer.toggleChimeSounds();
+        context.read<TimerProvider>().toggleChimeSounds();
       },
     );
   }
@@ -1021,7 +1039,14 @@ class _ToggleCard extends StatelessWidget {
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: onTap,
-            child: _PillToggle(on: on, shadowColor: shadowColor),
+            // Hit area expanded to 50×44 for WCAG 2.5.5; visible pill stays 50×28.
+            child: SizedBox(
+              width: 50,
+              height: 44,
+              child: Center(
+                child: _PillToggle(on: on, shadowColor: shadowColor),
+              ),
+            ),
           ),
         ],
       ),
@@ -1087,7 +1112,7 @@ class _Footer extends StatelessWidget {
           ),
         ),
         Text(
-          'v0.4.0 · made with ♥ by TreeGPT',
+          'v1.0.0 · made with ♥ by 🌱',
           style: TextStyle(
             fontFamily: 'monospace',
             fontSize: 9,

@@ -7,6 +7,7 @@ class TM {
 
   static const ink = Color(0xFF0E0D0C); // paper-black
   static const ink2 = Color(0xFF1A1917);
+  static const inkDeep = Color(0xFF050505); // sealed print-black (drawer)
   static const cream = Color(0xFFF5ECD7); // bone-cream
   static const cream2 = Color(0xFFEFE3C2);
   static const tomato = Color(0xFFFF3B2F);
