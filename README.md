@@ -10,6 +10,7 @@ Treemato is offline-first, opinionated, and small on purpose. It is the Pomodoro
 </p>
 
 ---
+This project is licensed under the GNU General Public License v3.0 - see the LICENSE file for details.
 
 ## Core Philosophy
 
